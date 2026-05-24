@@ -18,24 +18,22 @@ NC='\033[0m' # No Color
 
 # Pastikan script dijalankan sebagai root
 if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}┌────────────────────────────────────────────────────────┐${NC}"
-  echo -e "${RED}│ [ERROR] Script wajib dijalankan menggunakan akses ROOT! │${NC}"
-  echo -e "${RED}│ Silakan ketik: sudo su atau gunakan sudo ./healer.sh   │${NC}"
-  echo -e "${RED}└────────────────────────────────────────────────────────┘${NC}"
+  echo -e "${RED}[ERROR] Script wajib dijalankan dengan akses ROOT!${NC}"
+  echo -e "${RED}Silakan ketik: sudo su atau gunakan sudo ./healer.sh${NC}"
   exit 1
 fi
 
 # Fungsi jeda premium
 tunggu_enter() {
     echo -e ""
-    echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+    echo -e "${CYAN}─────────────────────────────────────────────${NC}"
     while true; do
-        echo -ne "${YELLOW}[✦] Ketik [X] lalu ENTER untuk balik ke Dashboard: ${NC}"
+        echo -ne "${YELLOW}[✦] Ketik [X] lalu ENTER untuk kembali: ${NC}"
         read -r jeda
         if [[ "$jeda" =~ ^[Xx]$ ]]; then
             break
         fi
-        echo -e "${RED}[!] Salah ketik bro! Harus huruf X atau x.${NC}"
+        echo -e "${RED}[!] Salah ketik bro! Harus huruf X/x.${NC}"
     done
 }
 
@@ -51,14 +49,14 @@ jalankan_auto_check() {
     # 1. Cek Antrean Port Web (80/443)
     KONEKSI_WEB=$(ss -ant | grep -E ':80|:443' | wc -l)
     if [ "$KONEKSI_WEB" -gt 350 ]; then
-        REKOMENDASI="${REKOMENDASI}\n ${RED}• [!] Port Web Overload ($KONEKSI_WEB koneksi). Panel stuck loading? Sikat pake MENU [09]${NC}"
+        REKOMENDASI="${REKOMENDASI}\n ${RED}• [!] Port Web Overload ($KONEKSI_WEB koneksi). Stuck loading? Sikat MENU [09]${NC}"
         ((WARNING_COUNT++))
     fi
 
     # 2. Cek Antrean Port Daemon Wings (8080)
     KONEKSI_WINGS=$(ss -ant | grep -E ':8080' | wc -l)
     if [ "$KONEKSI_WINGS" -gt 200 ]; then
-        REKOMENDASI="${REKOMENDASI}\n ${RED}• [!] Jalur Wings Overload ($KONEKSI_WINGS spam koneksi)! Ada script loop error? Clear di MENU [09] atau [07]${NC}"
+        REKOMENDASI="${REKOMENDASI}\n ${RED}• [!] Wings Overload ($KONEKSI_WINGS spam)! Clear di MENU [09] atau [07]${NC}"
         ((WARNING_COUNT++))
     fi
 
@@ -66,7 +64,7 @@ jalankan_auto_check() {
     if [ -f /var/log/nginx/error.log ]; then
         CRASH_NGINX=$(tail -n 30 /var/log/nginx/error.log | grep -E 'aborting|open socket' | tail -n 1)
         if [ ! -z "$CRASH_NGINX" ]; then
-            REKOMENDASI="${REKOMENDASI}\n ${RED}• [!] Nginx Socket Aborting detected! Web panel mati total. Clear pake MENU [09]${NC}"
+            REKOMENDASI="${REKOMENDASI}\n ${RED}• [!] Nginx Socket Aborting! Web panel mati total. Clear MENU [09]${NC}"
             ((WARNING_COUNT++))
         fi
     fi
@@ -75,26 +73,26 @@ jalankan_auto_check() {
     if systemctl is-active --quiet wings 2>/dev/null; then
         :
     else
-        REKOMENDASI="${REKOMENDASI}\n ${YELLOW}• [!] Daemon Wings Offline/Pingsan (Koneksi Merah). Beresin pake MENU [05] atau cek service.${NC}"
+        REKOMENDASI="${REKOMENDASI}\n ${YELLOW}• [!] Wings Offline/Pingsan. Beresin pake MENU [05] atau cek service.${NC}"
         ((WARNING_COUNT++))
     fi
 
     # 5. Cek Disk Full
     DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
     if [ "$DISK_USAGE" -gt 85 ]; then
-        REKOMENDASI="${REKOMENDASI}\n ${RED}• [!] Storage Kritis ($DISK_USAGE% Terpakai)! Cari biang keroknya di MENU [07] atau [03]${NC}"
+        REKOMENDASI="${REKOMENDASI}\n ${RED}• [!] Storage Kritis ($DISK_USAGE% Terpakai)! Cari biang kerok di MENU [07]${NC}"
         ((WARNING_COUNT++))
     fi
 
     # Tampilkan Hasil Analisis
     if [ "$WARNING_COUNT" -gt 0 ]; then
-        echo -e "${YELLOW}┌⚠️─ STATUS VPS LU (DITEMUKAN $WARNING_COUNT MASALAH) ──────────────────────┐${NC}"
+        echo -e "${YELLOW}⚠️  STATUS VPS LU (DITEMUKAN $WARNING_COUNT MASALAH)${NC}"
+        echo -e "${YELLOW}─────────────────────────────────────────────${NC}"
         echo -e "$REKOMENDASI"
-        echo -e "${YELLOW}└────────────────────────────────────────────────────────────────────────┘${NC}"
     else
-        echo -e "${GREEN}┌✔─ STATUS VPS LU ───────────────────────────────────────────────────────┐${NC}"
-        echo -e " ${GREEN}• Jaringan, WebServer, Storage, & Daemon terpantau AMAN & SEHAT! 🚀${NC}"
-        echo -e "${GREEN}└────────────────────────────────────────────────────────────────────────┘${NC}"
+        echo -e "${GREEN}✔  STATUS VPS LU${NC}"
+        echo -e "${GREEN}─────────────────────────────────────────────${NC}"
+        echo -e " ${GREEN}• Jaringan, WebServer, Storage & Daemon AMAN! 🚀${NC}"
     fi
     echo -e ""
 }
@@ -102,28 +100,29 @@ jalankan_auto_check() {
 # Loop Utama Dashboard Toolkit
 while true; do
 clear
-echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-echo -e "${CYAN}│${PURPLE}       ⚡ SYSTEM CORE PANEL HEALER BY RAFZ (V3.5) ⚡    ${CYAN}│${NC}"
-echo -e "${CYAN}│${DARK}       Ultimate VPS Automation & Troubleshooting      ${CYAN}│${NC}"
-echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+echo -e "${PURPLE}⚡ SYSTEM CORE PANEL HEALER BY RAFZ (V3.5) ⚡${NC}"
+echo -e "${DARK}Ultimate VPS Automation & Troubleshooting${NC}"
+echo -e "${CYAN}─────────────────────────────────────────────${NC}"
 echo -e " ${WHITE}Welcome back, Rafz! Hasil Cek Sistem:${NC}"
+echo -e ""
 
 # Jalankan diagnosa di dashboard utama
 jalankan_auto_check
 
+echo -e "${CYAN}─────────────────────────────────────────────${NC}"
 echo -e " ${WHITE}Pilih Opsi Menu:${NC}"
 echo -e ""
-echo -e " ${CYAN}[01]${NC} 🔒 FIX DPKG LOCK         ${DARK}-> Buka Gembok Update APT / DPKG Broken${NC}"
-echo -e " ${CYAN}[02]${NC} ☢️  DEEP CLEAN PANEL      ${DARK}-> Wipe Total Node & Web Server (Reset OS)${NC}"
-echo -e " ${CYAN}[03]${NC} 🧹 QUICK CLEAN DISK     ${DARK}-> Kuras Log & Cache Sampah (Legakan Space)${NC}"
-echo -e " ${CYAN}[04]${NC} 🧨 MANUAL WIPE VOLUMES  ${DARK}-> Hapus Sisa Server Ptero & DB Raksasa${NC}"
-echo -e " ${CYAN}[05]${NC} 🔌 FIX DOCKER SOCKET    ${DARK}-> Solusi Wings Gagal Konek Daemon Socket${NC}"
-echo -e " ${CYAN}[06]${NC} 🌀 REINSTALL DOCKER     ${DARK}-> Force Rebuild Komponen Docker Corrupted${NC}"
-echo -e " ${PURPLE}[07]${NC} 🚨 AUTO CIDUK HAMA KILL ${DARK}-> Scan & Auto Bantai Server Perusak VPS${NC}"
-echo -e " ${CYAN}[08]${NC} 📥 PTERODACTYL CORE     ${DARK}-> Auto Run Pterodactyl Official Installer${NC}"
-echo -e " ${GREEN}[09]${NC} 🛡️  RATE LIMIT & FLUSH    ${DARK}-> Pasang Anti-DDoS Nginx, Wings & Lepas Stuck Panel${NC}"
-echo -e " ${RED}[X]${NC}  ❌ SHUTDOWN TERMINAL     ${DARK}-> Keluar dari Script${NC}"
-echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+echo -e " ${CYAN}[01]${NC} 🔒 FIX DPKG LOCK       ${DARK}-> Buka Gembok Update APT / DPKG Broken${NC}"
+echo -e " ${CYAN}[02]${NC} ☢️  DEEP CLEAN PANEL    ${DARK}-> Wipe Total Node & Web Server (Reset OS)${NC}"
+echo -e " ${CYAN}[03]${NC} 🧹 QUICK CLEAN DISK   ${DARK}-> Kuras Log & Cache Sampah (Legakan Space)${NC}"
+echo -e " ${CYAN}[04]${NC} 🧨 MANUAL WIPE VOLUMES${DARK}-> Hapus Sisa Server Ptero & DB Raksasa${NC}"
+echo -e " ${CYAN}[05]${NC} 🔌 FIX DOCKER SOCKET  ${DARK}-> Solusi Wings Gagal Konek Daemon Socket${NC}"
+echo -e " ${CYAN}[06]${NC} 🌀 REINSTALL DOCKER   ${DARK}-> Force Rebuild Komponen Docker Corrupted${NC}"
+echo -e " ${PURPLE}[07]${NC} 🚨 AUTO CIDUK HAMA    ${DARK}-> Scan & Auto Bantai Server Perusak VPS${NC}"
+echo -e " ${CYAN}[08]${NC} 📥 PTERODACTYL CORE   ${DARK}-> Auto Run Pterodactyl Official Installer${NC}"
+echo -e " ${GREEN}[09]${NC} 🛡️  RATE LIMIT & FLUSH  ${DARK}-> Pasang Anti-DDoS Nginx & Lepas Stuck Panel${NC}"
+echo -e " ${RED}[X]${NC}  ❌ SHUTDOWN TERMINAL   ${DARK}-> Keluar dari Script${NC}"
+echo -e "${CYAN}─────────────────────────────────────────────${NC}"
 
 # Loop Validasi Menu Interaktif
 while true; do
@@ -145,12 +144,11 @@ done
 case $pilihan in
     1)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│                     🔒 FIX DPKG LOCK                 │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}🔒 FIX DPKG LOCK${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${RED}❌ E: Could not get lock /var/lib/dpkg/lock-frontend...${NC}"
         echo -e "${RED}❌ E: Unable to acquire the dpkg frontend lock...${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${WHITE}[LOG] Ada proses instalasi lain yang lagi ngunci APT di background.${NC}"
         echo -e ""
         while true; do
@@ -172,12 +170,11 @@ case $pilihan in
         
     2)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│               ☢️  DEEP CLEAN WIPE OUT                │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}☢️  DEEP CLEAN WIPE OUT${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${RED}⚠️  WARNING: Opsi ini bakal ngapus TOTAL semua data${NC}"
         echo -e "${RED}   Pterodactyl, Wings, Nginx, Docker, & Database SQL!${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${WHITE}Pake ini cuma kalau installer lu error parah dan mau reset OS ke awal.${NC}"
         echo -e ""
         while true; do
@@ -215,12 +212,11 @@ case $pilihan in
 
     3)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│               🧹 DISK QUICK CLEAN DISK               │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}🧹 DISK QUICK CLEAN DISK${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${YELLOW}[INFO] Ngosongin file sampah log sistem aktif (.gz)${NC}"
         echo -e "${YELLOW}       Aman, gak bakal nyentuh data project / game server.${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e ""
         while true; do
             echo -ne "${YELLOW}[?] Jalankan pembersihan cache sampah? (y/n): ${NC}"
@@ -244,12 +240,11 @@ case $pilihan in
 
     4)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│              🧨 MANUAL WIPE DATA SERVER              │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}🧨 MANUAL WIPE DATA SERVER${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${RED}⚠️  WARNING: Perintah ini bakal ngapus paksa folder game,${NC}"
         echo -e "${RED}   direktori web panel, beserta core database SQL!${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e ""
         while true; do
             echo -ne "${RED}[💀] Lu yakin mau wipe data game & database SQL? (y/n): ${NC}"
@@ -272,11 +267,10 @@ case $pilihan in
 
     5)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│               🔌 FIX DOCKER SOCKET                   │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}🔌 FIX DOCKER SOCKET${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${RED}❌ Error response from daemon: Dialogue socket in use...${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${WHITE}[LOG] Memperbaiki socket docker kuncian pasca crash / full disk.${NC}"
         echo -e ""
         while true; do
@@ -299,11 +293,10 @@ case $pilihan in
 
     6)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│               🌀 FORCE REBUILD DOCKER                │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}🌀 FORCE REBUILD DOCKER${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${RED}❌ Docker status: dead / failed (Result: exit-code)${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${WHITE}[LOG] Menginstal ulang service Docker tanpa merusak OS utama VPS.${NC}"
         echo -e ""
         while true; do
@@ -325,9 +318,8 @@ case $pilihan in
 
     7)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│               🚨 LAPORAN PEMAKAIAN DISK              │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}🚨 LAPORAN PEMAKAIAN DISK${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         
         echo -e "${PURPLE}[1] CEK PENYIMPANAN VPS LU saat ini:${NC}"
         df -h / | awk 'NR==2 {print " • Total Size : " $2 "\n • Terpakai   : " $3 "\n • Tersedia   : " $4 "\n • Persentase : " $5}'
@@ -351,13 +343,13 @@ case $pilihan in
         echo -e ""
         
         echo -e "${PURPLE}[3] MENCOCOKKAN DATA FOLDER KE DATABASE PANEL:${NC}"
-        echo -e "${RED}------------------------------------------------──────${NC}"
+        echo -e "${RED}─────────────────────────────────────────────${NC}"
         
         DB_CHECK=$(sudo mysql -u root -e "USE panel; SELECT s.id FROM servers s WHERE s.uuid LIKE '$SHORT_UUID%';" 2>/dev/null)
         
         if [ -z "$DB_CHECK" ]; then
             echo -e "${YELLOW} [!] ID Server gak ada di database. Fix ini server hantu (udah di-delete dari panel tapi sisa folder masih ada).${NC}"
-            echo -e "${RED}------------------------------------------------──────${NC}"
+            echo -e "${RED}─────────────────────────────────────────────${NC}"
             
             while true; do
                 echo -ne "${YELLOW}[?] Folder sisa hantu ketemu. Hapus paksa foldernya? (y/n): ${NC}"
@@ -374,9 +366,9 @@ case $pilihan in
         fi
         
         sudo mysql -u root -e "USE panel; SELECT s.id AS 'ID Server', s.name AS 'Nama Server', u.username AS 'Username', u.email AS 'Email Pelaku', s.uuid AS 'UUID Lengkap' FROM servers s JOIN users u ON s.owner_id = u.id WHERE s.uuid LIKE '$SHORT_UUID%';"
-        echo -e "${RED}------------------------------------------------──────${NC}"
+        echo -e "${RED}─────────────────────────────────────────────${NC}"
         echo -e "${GREEN}[INFO] Cocok 100%! Data pemilik server di atas berhasil dilacak.${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e ""
         
         echo -e "${YELLOW}⚠️  KONFIRMASI EKSEKUSI:${NC}"
@@ -408,11 +400,10 @@ case $pilihan in
 
     8)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│               📥 PTERODACTYL OFFICIAL INSTALLER      │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}📥 PTERODACTYL OFFICIAL INSTALLER${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${YELLOW}[INFO] Bakal nge-run installer script resmi Pterodactyl.${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e ""
         while true; do
             echo -ne "${YELLOW}[?] Download & jalankan script installer? (y/n): ${NC}"
@@ -435,12 +426,11 @@ case $pilihan in
 
     9)
         clear
-        echo -e "${CYAN}┌──────────────────────────────────────────────────────┐${NC}"
-        echo -e "${CYAN}│               🛡️  ANTI-DDOS & FLUSH PORT SYSTEM       │${NC}"
-        echo -e "${CYAN}└──────────────────────────────────────────────────────┘${NC}"
+        echo -e "${CYAN}🛡️  ANTI-DDOS & FLUSH PORT SYSTEM${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e "${YELLOW}[INFO] Modul pelindung panel & node dari banjir spam request.${NC}"
         echo -e "${YELLOW}       Bakal otomatis masang rule limit_req di nginx.${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
+        echo -e "${CYAN}─────────────────────────────────────────────${NC}"
         echo -e ""
         while true; do
             echo -ne "${YELLOW}[?] Pasang pembatas request & bersihkan antrean port? (y/n): ${NC}"
