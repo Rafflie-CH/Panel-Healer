@@ -223,16 +223,44 @@ ok "Dependency dasar siap."
 
 run_step "03" "[03] Deteksi IP VPS"
 
-PUBLIC_IP="$(
-    curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || true
-)"
+PUBLIC_IP=""
 
-if ! echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
-    PUBLIC_IP="$(hostname -I | awk '{print $1}')"
+# coba beberapa sumber
+for url in \
+    "https://api.ipify.org" \
+    "https://ifconfig.me/ip" \
+    "https://icanhazip.com" \
+    "https://checkip.amazonaws.com"
+do
+    PUBLIC_IP="$(curl -4fsS --max-time 8 "$url" 2>/dev/null || true)"
+    PUBLIC_IP="$(echo "$PUBLIC_IP" | tr -d '[:space:]')"
+    if echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
+        break
+    fi
+    PUBLIC_IP=""
+done
+
+# fallback dari interface lokal
+if [[ -z "$PUBLIC_IP" ]]; then
+    PUBLIC_IP="\( (hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)' | head -1 || true)"
+    PUBLIC_IP="$(echo "$PUBLIC_IP" | tr -d '[:space:]')"
+fi
+
+if [[ -z "$PUBLIC_IP" ]]; then
+    PUBLIC_IP="$(ip -4 addr show scope global 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}' | head -1 || true)"
+    PUBLIC_IP="$(echo "$PUBLIC_IP" | tr -d '[:space:]')"
 fi
 
 if ! echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
-    error_exit 1 "IPv4 VPS tidak ditemukan."
+    echo
+    echo "Gagal deteksi IPv4 otomatis."
+    printf "Masukkan IPv4 VPS manual: "
+    read -r PUBLIC_IP
+    PUBLIC_IP="$(echo "$PUBLIC_IP" | tr -d '[:space:]')"
+fi
+
+if ! echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
+    error_exit 1 "IPv4 VPS tidak ditemukan / tidak valid."
 fi
 
 echo "VPS IPv4: $PUBLIC_IP"
