@@ -866,6 +866,28 @@ if [[ ! -x /usr/local/bin/wings ]]; then
     chmod +x /usr/local/bin/wings
 fi
 
+# pastikan Docker terpasang (wajib untuk Wings)
+if ! command -v docker >/dev/null 2>&1; then
+    info "Docker belum ada — install..."
+    set +e
+    curl -fsSL https://get.docker.com | sh
+    DOCKER_RC=$?
+    set -e
+    if [[ $DOCKER_RC -ne 0 ]] || ! command -v docker >/dev/null 2>&1; then
+        error_exit 1 "Gagal install Docker"
+    fi
+fi
+
+# enable docker (nama unit bisa docker.service)
+systemctl enable --now docker 2>/dev/null || systemctl enable --now docker.socket 2>/dev/null || true
+sleep 2
+if ! docker info >/dev/null 2>&1; then
+    warn "Docker belum siap, coba start ulang..."
+    systemctl start docker 2>/dev/null || true
+    sleep 3
+fi
+docker info >/dev/null 2>&1 || error_exit 1 "Docker tidak berjalan"
+
 # buat systemd unit kalau belum ada
 if [[ ! -f /etc/systemd/system/wings.service ]]; then
     info "Membuat wings.service..."
@@ -873,8 +895,7 @@ if [[ ! -f /etc/systemd/system/wings.service ]]; then
 [Unit]
 Description=Pterodactyl Wings Daemon
 After=docker.service
-Requires=docker.service
-PartOf=docker.service
+Wants=docker.service
 
 [Service]
 User=root
@@ -890,6 +911,9 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 WINGSEOF
+else
+    # pastikan unit tidak pakai Requires=docker yang bikin gagal total
+    sed -i 's/^Requires=docker.service/Wants=docker.service/' /etc/systemd/system/wings.service 2>/dev/null || true
 fi
 
 # pastikan config.yml ada
@@ -897,8 +921,6 @@ if [[ ! -s /etc/pterodactyl/config.yml ]]; then
     error_exit 1 "config.yml kosong — step 12 gagal?"
 fi
 
-# docker harus jalan
-systemctl enable --now docker 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable wings >/dev/null 2>&1 || true
 systemctl restart wings || error_exit 1 "Gagal restart wings"
