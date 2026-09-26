@@ -27,7 +27,6 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 STEP="Inisialisasi"
 LAST_ERROR=""
 
-# ---------- error handler ----------
 error_exit() {
     local rc=${1:-1}
     local msg="${2:-Unknown error}"
@@ -101,7 +100,7 @@ export COMPOSER_ALLOW_SUPERUSER=1
 # HEADER + INPUT
 # =========================================================
 
-banner "RAFZHOST PETRODACYL INSTALLER"
+banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER"
 
 echo
 echo "Masukkan konfigurasi domain dan akun Panel."
@@ -129,14 +128,12 @@ printf "Password Admin: "
 read -rs ADMIN_PASSWORD
 echo
 
-# validasi input
 [[ -n "$PANEL_DOMAIN" ]]    || error_exit 1 "Domain Panel tidak boleh kosong."
 [[ -n "$NODE_DOMAIN" ]]     || error_exit 1 "Domain Node tidak boleh kosong."
 [[ -n "$ADMIN_EMAIL" ]]     || error_exit 1 "Email Admin tidak boleh kosong."
 [[ -n "$ADMIN_USERNAME" ]]  || error_exit 1 "Username Admin tidak boleh kosong."
 [[ -n "$ADMIN_PASSWORD" ]]  || error_exit 1 "Password Admin tidak boleh kosong."
 [[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
-
 
 # =========================================================
 # DEFAULT CONFIG
@@ -230,11 +227,13 @@ PUBLIC_IP="$(
     curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || true
 )"
 
-if [[ ! "\( PUBLIC_IP" =\~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \) ]]; then
+if ! echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
     PUBLIC_IP="$(hostname -I | awk '{print $1}')"
 fi
 
-[[ "\( PUBLIC_IP" =\~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \) ]] || error_exit 1 "IPv4 VPS tidak ditemukan."
+if ! echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
+    error_exit 1 "IPv4 VPS tidak ditemukan."
+fi
 
 echo "VPS IPv4: $PUBLIC_IP"
 ok "IP terdeteksi."
@@ -962,7 +961,6 @@ cat > /tmp/egg.json << 'EGGJSON'
 }
 EGGJSON
 
-# validasi json
 python3 -c '
 import json, sys
 with open("/tmp/egg.json") as f:
@@ -1002,12 +1000,10 @@ if (!$nest) {
 $nestId = (int) $nest->id;
 echo "NEST_ID=" . $nestId . "\n";
 
-// hapus egg lama biar ga duplikat
 \Pterodactyl\Models\Egg::where("nest_id", $nestId)
     ->where("name", $eggData["name"] ?? "")
     ->delete();
 
-// 1) coba EggImporterService resmi
 try {
     $tmp = "/tmp/egg_import.json";
     file_put_contents($tmp, json_encode($eggData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
@@ -1020,7 +1016,6 @@ try {
     echo "SERVICE_IMPORT_FAIL=" . $e->getMessage() . "\n";
 }
 
-// 2) fallback manual
 $norm = function ($v, $default = []) {
     if ($v === null) return $default;
     if (is_string($v)) {
