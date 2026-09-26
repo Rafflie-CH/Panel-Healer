@@ -530,7 +530,7 @@ api_get() {
     local url="$1"
     local out
     set +e
-    out="\( (curl -fsS --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 60 " \){API_HEADERS[@]}" "$url" 2>&1)"
+    out="$(curl -fsS --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 60 "${API_HEADERS[@]}" "$url" 2>&1)"
     local rc=$?
     set -e
     if [[ $rc -ne 0 ]]; then
@@ -545,7 +545,7 @@ api_post() {
     local data="$2"
     local out
     set +e
-    out="\( (curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 " \){API_HEADERS[@]}" -X POST -d "$data" "$url" 2>&1)"
+    out="$(curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "${API_HEADERS[@]}" -X POST -d "$data" "$url" 2>&1)"
     local rc=$?
     set -e
     if [[ $rc -ne 0 ]]; then
@@ -833,6 +833,26 @@ fi
 
 ok "Wings aktif."
 
+# --- fix hairpin NAT + guzzle (dari panel manager) ---
+info "Fix /etc/hosts + GUZZLE timeout..."
+sed -i "/[[:space:]]$PANEL_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
+sed -i "/[[:space:]]$NODE_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
+echo "127.0.0.1 $PANEL_DOMAIN" >> /etc/hosts
+echo "127.0.0.1 $NODE_DOMAIN" >> /etc/hosts
+
+if [[ -f /var/www/pterodactyl/.env ]]; then
+    sed -i '/^GUZZLE_TIMEOUT=/d' /var/www/pterodactyl/.env
+    sed -i '/^GUZZLE_CONNECT_TIMEOUT=/d' /var/www/pterodactyl/.env
+    echo 'GUZZLE_TIMEOUT=900' >> /var/www/pterodactyl/.env
+    echo 'GUZZLE_CONNECT_TIMEOUT=60' >> /var/www/pterodactyl/.env
+fi
+
+systemctl restart docker 2>/dev/null || true
+systemctl restart wings 2>/dev/null || true
+sleep 2
+ok "Hosts + Guzzle + Docker/Wings di-refresh."
+
+
 # =========================================================
 # 14 FINAL VALIDATION
 # =========================================================
@@ -867,156 +887,9 @@ run_step "15" "[15] Import Egg — Nusantara Project GOD MODE"
 
 info "Menulis egg.json..."
 
-cat > /tmp/egg.json << 'EGGJSON'
-{
-    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
-    "meta": {
-        "version": "PTDL_v2",
-        "update_url": null
-    },
-    "exported_at": "2026-08-24T06:34:06+07:00",
-    "name": "Nusantara Project - ULTIMATE GOD MODE (Unified)",
-    "author": "rafzhost@rafzhost.my.id",
-    "description": "Satu Egg untuk menguasai semuanya. Bisa switch antara YARN / NPM langsung dari panel. Dilengkapi auto-bypass Baileys error, full image Docker (Node 15-24, Python, OS), Cloudflared Tunnel, dan UI Custom Bahasa Indonesia lengkap.",
-    "features": [],
-    "docker_images": {
-        "NodeJS 24": "ghcr.io/parkervcp/yolks:nodejs_24",
-        "NodeJS 23": "ghcr.io/parkervcp/yolks:nodejs_23",
-        "NodeJS 22": "ghcr.io/parkervcp/yolks:nodejs_22",
-        "NodeJS 21": "ghcr.io/parkervcp/yolks:nodejs_21",
-        "NodeJS 20": "ghcr.io/parkervcp/yolks:nodejs_20",
-        "NodeJS 19": "ghcr.io/parkervcp/yolks:nodejs_19",
-        "NodeJS 18": "ghcr.io/parkervcp/yolks:nodejs_18",
-        "NodeJS 17": "ghcr.io/parkervcp/yolks:nodejs_17",
-        "NodeJS 16": "ghcr.io/parkervcp/yolks:nodejs_16",
-        "NodeJS 15": "ghcr.io/parkervcp/yolks:nodejs_15",
-        "Python 3.12": "ghcr.io/parkervcp/yolks:python_3.12",
-        "Python 3.11": "ghcr.io/parkervcp/yolks:python_3.11",
-        "Python 3.10": "ghcr.io/parkervcp/yolks:python_3.10",
-        "Python 3.9": "ghcr.io/parkervcp/yolks:python_3.9",
-        "Python 3.8": "ghcr.io/parkervcp/yolks:python_3.8",
-        "Debian OS (Universal)": "ghcr.io/parkervcp/yolks:debian",
-        "Ubuntu OS (Universal)": "ghcr.io/parkervcp/yolks:ubuntu"
-    },
-    "file_denylist": [],
-    "startup": "if [[ -d .git ]] && [[ \"{{AUTO_UPDATE}}\" == \"1\" ]]; then git pull; fi; if [[ ! -z ${CLOUDFLARED_TOKEN} ]]; then echo \"Memulai Cloudflared Tunnel...\"; wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared && chmod +x cloudflared && ./cloudflared tunnel --no-autoupdate run --token \( {CLOUDFLARED_TOKEN} > /dev/null 2>&1 & fi; req_file= \){REQUIREMENTS_FILE:-requirements.txt}; if [ -f /home/container/$req_file ]; then pip install -r \( req_file; fi; if [ \" \){PACKAGE_MANAGER}\" == \"npm\" ]; then if [[ ! -z ${NODE_PACKAGES} ]]; then yes \"\" | npm install ${NODE_PACKAGES} --legacy-peer-deps --no-fund --no-audit; fi; if [[ ! -z ${UNNODE_PACKAGES} ]]; then yes \"\" | npm uninstall ${UNNODE_PACKAGES} --no-fund --no-audit; fi; if [ -f /home/container/package.json ]; then yes \"\" | npm install --legacy-peer-deps --no-fund --no-audit; fi; rm -rf .npm .log .cache --force; else if [[ ! -z ${NODE_PACKAGES} ]]; then yes | yarn add ${NODE_PACKAGES} --non-interactive --ignore-engines; fi; if [[ ! -z ${UNNODE_PACKAGES} ]]; then yes | yarn remove ${UNNODE_PACKAGES} --non-interactive; fi; if [ -f /home/container/package.json ]; then yes | yarn install --non-interactive --ignore-engines; fi; rm -rf .npm .log .cache .yarn-cache --force; fi; if [[ ! -z \( {CUSTOM_ENVIRONMENT_VARIABLES} ]]; then vars= \)(echo ${CUSTOM_ENVIRONMENT_VARIABLES} | tr \";\" \"\\n\"); for line in $vars; do export $line; done fi; eval ${CMD_RUN};",
-    "config": {
-        "files": "{}",
-        "startup": "{\r\n    \"done\": \"running\"\r\n}",
-        "logs": "{}",
-        "stop": "^^C"
-    },
-    "scripts": {
-        "installation": {
-            "script": "#!/bin/bash\n# God Mode Installation Script (Unified Yarn/NPM) + Custom UI\napt update\napt install -y git curl wget jq file unzip make gcc g++ python3 python3-dev python3-pip libtool\n\n# Cek dan install yarn secara default untuk fallback\nif command -v npm &> /dev/null; then npm install -g yarn; fi\n\nmkdir -p /mnt/server\ncd /mnt/server\n\nif [ \"\( {USER_UPLOAD}\" == \"true\" ] || [ \" \){USER_UPLOAD}\" == \"1\" ]; then\n    echo -e \"assuming user knows what they are doing have a good day.\"\n    exit 0\nfi\n\nif [[ \( {GIT_ADDRESS} != *.git ]]; then\n    GIT_ADDRESS= \){GIT_ADDRESS}.git\nfi\n\nif [ -z \"\( {USERNAME}\" ] && [ -z \" \){ACCESS_TOKEN}\" ]; then\n    echo -e \"using anon api call\"\nelse\n    GIT_ADDRESS=\"https://\( {USERNAME}: \){ACCESS_TOKEN}@$(echo -e \( {GIT_ADDRESS} | cut -d/ -f3-)\"\nfi\n\nif [ \" \)(ls -A /mnt/server)\" ]; then\n    if [ -d .git ]; then\n        if [ -f .git/config ]; then\n            ORIGIN=\( (git config --get remote.origin.url)\n        else\n            exit 10\n        fi\n    fi\n    if [ \" \){ORIGIN}\" == \"${GIT_ADDRESS}\" ]; then git pull; fi\nelse\n    if [ -z ${BRANCH} ]; then\n        git clone ${GIT_ADDRESS} .\n    else\n        git clone --single-branch --branch ${BRANCH} \( {GIT_ADDRESS} .\n    fi\nfi\n\necho \"Mengecek dependencies nodejs...\"\nif [ -f /mnt/server/package.json ]; then\n    if [ \" \){PACKAGE_MANAGER}\" == \"npm\" ]; then\n        echo \"--> Menjalankan instalasi menggunakan NPM (Mode: legacy-peer-deps)\"\n        rm -rf node_modules package-lock.json\n        yes \"\" | npm install --production --legacy-peer-deps --no-fund --no-audit\n    else\n        echo \"--> Menjalankan instalasi menggunakan YARN (Mode: ignore-engines)\"\n        rm -f package-lock.json\n        yes | yarn install --production --non-interactive --ignore-engines\n    fi\nfi\n\nreq_file=${REQUIREMENTS_FILE:-requirements.txt}\nif [ -f /mnt/server/$req_file ]; then\n    echo \"--> Menginstal library Python dari $req_file...\"\n    pip install -r $req_file\nfi\n\necho -e \"install complete\"\nexit 0",
-            "container": "debian:bullseye-slim",
-            "entrypoint": "bash"
-        }
-    },
-    "variables": [
-        {
-            "name": "GUNAKAN FILE UPLOAD MANUAL?",
-            "description": "Aktifkan saklar ini jika Anda mengupload file bot sendiri secara manual. Matikan saklar ini jika Anda ingin mendownload script otomatis dari GitHub. PENTING: Mode download dari GitHub HANYA akan terpicu jika Anda menekan tombol \"Reinstall Server\" di menu Settings (paling bawah).",
-            "env_variable": "USER_UPLOAD",
-            "default_value": "1",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|boolean",
-            "field_type": "text"
-        },
-        {
-            "name": "PACKAGE MANAGER (YARN / NPM)",
-            "description": "Pilih package manager yang ingin digunakan untuk menginstal modul NodeJS (ketik 'yarn' atau 'npm'). Default direkomendasikan menggunakan yarn untuk menghindari error EALLOWGIT dari Baileys/GitHub.",
-            "env_variable": "PACKAGE_MANAGER",
-            "default_value": "yarn",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|string|in:yarn,npm",
-            "field_type": "text"
-        },
-        {
-            "name": "FILE UTAMA SCRIPT (ENTRY FILE)",
-            "description": "Nama file utama yang bertugas menyalakan bot Anda. Pastikan disesuaikan dengan package manager pilihan Anda. Contoh: yarn start, npm start, python main.py",
-            "env_variable": "CMD_RUN",
-            "default_value": "yarn start",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "required|string",
-            "field_type": "text"
-        },
-        {
-            "name": "FILE LIBRARY / REQUIREMENTS",
-            "description": "Nama file yang berisi daftar library yang dibutuhkan script (standarnya requirements.txt). Server akan mendeteksi dan menginstalnya secara otomatis jika file ini ditemukan.",
-            "env_variable": "REQUIREMENTS_FILE",
-            "default_value": "requirements.txt",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|string",
-            "field_type": "text"
-        },
-        {
-            "name": "LINK REPOSITORI GIT (OPSIONAL)",
-            "description": "Alamat link Repository GitHub (contoh: https://github.com/username/nama_repo). PENTING: Agar aksi Anda dalam mengisi/mengubah link Repository Github di kolom ini dapat terpicu, Anda WAJIB menekan tombol \"Reinstall Server\" di menu Settings (paling bawah) agar sistem mengunduhnya. Jika Anda tidak melakukannya, tidak akan ada yang terjadi.",
-            "env_variable": "GIT_ADDRESS",
-            "default_value": "",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|string",
-            "field_type": "text"
-        },
-        {
-            "name": "Install Branch",
-            "description": "The branch to install.",
-            "env_variable": "BRANCH",
-            "default_value": "",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|string",
-            "field_type": "text"
-        },
-        {
-            "name": "Auto Update",
-            "description": "Pull the latest files dari Git pas server start (1 = Yes, 0 = No)",
-            "env_variable": "AUTO_UPDATE",
-            "default_value": "1",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|boolean",
-            "field_type": "text"
-        },
-        {
-            "name": "Cloudflared Token",
-            "description": "Token untuk Cloudflare Argo Tunnel. Kalo diisi, panel bakal otomatis download & run Cloudflared di background buat web/bot lu.",
-            "env_variable": "CLOUDFLARED_TOKEN",
-            "default_value": "",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|string",
-            "field_type": "text"
-        },
-        {
-            "name": "Git Username",
-            "description": "Username to auth with git.",
-            "env_variable": "USERNAME",
-            "default_value": "",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|string",
-            "field_type": "text"
-        },
-        {
-            "name": "Git Access Token",
-            "description": "Password/Token to use with git.",
-            "env_variable": "ACCESS_TOKEN",
-            "default_value": "",
-            "user_viewable": true,
-            "user_editable": true,
-            "rules": "nullable|string",
-            "field_type": "text"
-        }
-    ]
-}
-EGGJSON
+EGG_B64="eyJfY29tbWVudCI6ICJETyBOT1QgRURJVCIsICJtZXRhIjogeyJ2ZXJzaW9uIjogIlBURExfdjIiLCAidXBkYXRlX3VybCI6IG51bGx9LCAiZXhwb3J0ZWRfYXQiOiAiMjAyNi0wOC0yNFQwNjozNDowNiswNzowMCIsICJuYW1lIjogIk51c2FudGFyYSBQcm9qZWN0IC0gVUxUSU1BVEUgR09EIE1PREUgKFVuaWZpZWQpIiwgImF1dGhvciI6ICJyYWZ6aG9zdEByYWZ6aG9zdC5teS5pZCIsICJkZXNjcmlwdGlvbiI6ICJTYXR1IEVnZyB1bnR1ayBtZW5ndWFzYWkgc2VtdWFueWEuIEJpc2Egc3dpdGNoIGFudGFyYSBZQVJOIC8gTlBNIGxhbmdzdW5nIGRhcmkgcGFuZWwuIiwgImZlYXR1cmVzIjogW10sICJkb2NrZXJfaW1hZ2VzIjogeyJOb2RlSlMgMjQiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzI0IiwgIk5vZGVKUyAyMyI6ICJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjMiLCAiTm9kZUpTIDIyIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOm5vZGVqc18yMiIsICJOb2RlSlMgMjEiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzIxIiwgIk5vZGVKUyAyMCI6ICJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjAiLCAiTm9kZUpTIDE5IjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOm5vZGVqc18xOSIsICJOb2RlSlMgMTgiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzE4IiwgIk5vZGVKUyAxNyI6ICJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTciLCAiTm9kZUpTIDE2IjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOm5vZGVqc18xNiIsICJOb2RlSlMgMTUiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzE1IiwgIlB5dGhvbiAzLjEyIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjEyIiwgIlB5dGhvbiAzLjExIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjExIiwgIlB5dGhvbiAzLjEwIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjEwIiwgIlB5dGhvbiAzLjkiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6cHl0aG9uXzMuOSIsICJQeXRob24gMy44IjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjgiLCAiRGViaWFuIE9TIChVbml2ZXJzYWwpIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOmRlYmlhbiIsICJVYnVudHUgT1MgKFVuaXZlcnNhbCkiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6dWJ1bnR1In0sICJmaWxlX2RlbnlsaXN0IjogW10sICJzdGFydHVwIjogImlmIFtbIC1kIC5naXQgXV0gJiYgW1sgXCJ7e0FVVE9fVVBEQVRFfX1cIiA9PSBcIjFcIiBdXTsgdGhlbiBnaXQgcHVsbDsgZmk7IGlmIFtbICEgLXogJHtDTE9VREZMQVJFRF9UT0tFTn0gXV07IHRoZW4gZWNobyBcIk1lbXVsYWkgQ2xvdWRmbGFyZWQgVHVubmVsLi4uXCI7IHdnZXQgLXEgaHR0cHM6Ly9naXRodWIuY29tL2Nsb3VkZmxhcmUvY2xvdWRmbGFyZWQvcmVsZWFzZXMvbGF0ZXN0L2Rvd25sb2FkL2Nsb3VkZmxhcmVkLWxpbnV4LWFtZDY0IC1PIGNsb3VkZmxhcmVkICYmIGNobW9kICt4IGNsb3VkZmxhcmVkICYmIC4vY2xvdWRmbGFyZWQgdHVubmVsIC0tbm8tYXV0b3VwZGF0ZSBydW4gLS10b2tlbiAke0NMT1VERkxBUkVEX1RPS0VOfSA+IC9kZXYvbnVsbCAyPiYxICYgZmk7IHJlcV9maWxlPSR7UkVRVUlSRU1FTlRTX0ZJTEU6LXJlcXVpcmVtZW50cy50eHR9OyBpZiBbIC1mIC9ob21lL2NvbnRhaW5lci8kcmVxX2ZpbGUgXTsgdGhlbiBwaXAgaW5zdGFsbCAtciAkcmVxX2ZpbGU7IGZpOyBpZiBbIFwiJHtQQUNLQUdFX01BTkFHRVJ9XCIgPT0gXCJucG1cIiBdOyB0aGVuIGlmIFtbICEgLXogJHtOT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgXCJcIiB8IG5wbSBpbnN0YWxsICR7Tk9ERV9QQUNLQUdFU30gLS1sZWdhY3ktcGVlci1kZXBzIC0tbm8tZnVuZCAtLW5vLWF1ZGl0OyBmaTsgaWYgW1sgISAteiAke1VOTk9ERV9QQUNLQUdFU30gXV07IHRoZW4geWVzIFwiXCIgfCBucG0gdW5pbnN0YWxsICR7VU5OT0RFX1BBQ0tBR0VTfSAtLW5vLWZ1bmQgLS1uby1hdWRpdDsgZmk7IGlmIFsgLWYgL2hvbWUvY29udGFpbmVyL3BhY2thZ2UuanNvbiBdOyB0aGVuIHllcyBcIlwiIHwgbnBtIGluc3RhbGwgLS1sZWdhY3ktcGVlci1kZXBzIC0tbm8tZnVuZCAtLW5vLWF1ZGl0OyBmaTsgcm0gLXJmIC5ucG0gLmxvZyAuY2FjaGUgLS1mb3JjZTsgZWxzZSBpZiBbWyAhIC16ICR7Tk9ERV9QQUNLQUdFU30gXV07IHRoZW4geWVzIHwgeWFybiBhZGQgJHtOT0RFX1BBQ0tBR0VTfSAtLW5vbi1pbnRlcmFjdGl2ZSAtLWlnbm9yZS1lbmdpbmVzOyBmaTsgaWYgW1sgISAteiAke1VOTk9ERV9QQUNLQUdFU30gXV07IHRoZW4geWVzIHwgeWFybiByZW1vdmUgJHtVTk5PREVfUEFDS0FHRVN9IC0tbm9uLWludGVyYWN0aXZlOyBmaTsgaWYgWyAtZiAvaG9tZS9jb250YWluZXIvcGFja2FnZS5qc29uIF07IHRoZW4geWVzIHwgeWFybiBpbnN0YWxsIC0tbm9uLWludGVyYWN0aXZlIC0taWdub3JlLWVuZ2luZXM7IGZpOyBybSAtcmYgLm5wbSAubG9nIC5jYWNoZSAueWFybi1jYWNoZSAtLWZvcmNlOyBmaTsgaWYgW1sgISAteiAke0NVU1RPTV9FTlZJUk9OTUVOVF9WQVJJQUJMRVN9IF1dOyB0aGVuIHZhcnM9JChlY2hvICR7Q1VTVE9NX0VOVklST05NRU5UX1ZBUklBQkxFU30gfCB0ciBcIjtcIiBcIlxcblwiKTsgZm9yIGxpbmUgaW4gJHZhcnM7IGRvIGV4cG9ydCAkbGluZTsgZG9uZSBmaTsgZXZhbCAke0NNRF9SVU59OyIsICJjb25maWciOiB7ImZpbGVzIjogInt9IiwgInN0YXJ0dXAiOiAie1xyXG4gICAgXCJkb25lXCI6IFwicnVubmluZ1wiXHJcbn0iLCAibG9ncyI6ICJ7fSIsICJzdG9wIjogIl5eQyJ9LCAic2NyaXB0cyI6IHsiaW5zdGFsbGF0aW9uIjogeyJzY3JpcHQiOiAiIyEvYmluL2Jhc2hcbmFwdCB1cGRhdGVcbmFwdCBpbnN0YWxsIC15IGdpdCBjdXJsIHdnZXQganEgZmlsZSB1bnppcCBtYWtlIGdjYyBnKysgcHl0aG9uMyBweXRob24zLWRldiBweXRob24zLXBpcCBsaWJ0b29sXG5pZiBjb21tYW5kIC12IG5wbSAmPiAvZGV2L251bGw7IHRoZW4gbnBtIGluc3RhbGwgLWcgeWFybjsgZmlcbm1rZGlyIC1wIC9tbnQvc2VydmVyXG5jZCAvbW50L3NlcnZlclxuaWYgWyBcIiR7VVNFUl9VUExPQUR9XCIgPT0gXCJ0cnVlXCIgXSB8fCBbIFwiJHtVU0VSX1VQTE9BRH1cIiA9PSBcIjFcIiBdOyB0aGVuIGVjaG8gZG9uZTsgZXhpdCAwOyBmaVxuaWYgW1sgJHtHSVRfQUREUkVTU30gIT0gKi5naXQgXV07IHRoZW4gR0lUX0FERFJFU1M9JHtHSVRfQUREUkVTU30uZ2l0OyBmaVxuaWYgWyAteiBcIiR7VVNFUk5BTUV9XCIgXSAmJiBbIC16IFwiJHtBQ0NFU1NfVE9LRU59XCIgXTsgdGhlbiBlY2hvIGFub247IGVsc2UgR0lUX0FERFJFU1M9XCJodHRwczovLyR7VVNFUk5BTUV9OiR7QUNDRVNTX1RPS0VOfUAkKGVjaG8gLWUgJHtHSVRfQUREUkVTU30gfCBjdXQgLWQvIC1mMy0pXCI7IGZpXG5pZiBbIFwiJChscyAtQSAvbW50L3NlcnZlcilcIiBdOyB0aGVuIGlmIFsgLWQgLmdpdCBdICYmIFsgLWYgLmdpdC9jb25maWcgXTsgdGhlbiBPUklHSU49JChnaXQgY29uZmlnIC0tZ2V0IHJlbW90ZS5vcmlnaW4udXJsKTsgaWYgWyBcIiR7T1JJR0lOfVwiID09IFwiJHtHSVRfQUREUkVTU31cIiBdOyB0aGVuIGdpdCBwdWxsOyBmaTsgZmk7IGVsc2UgaWYgWyAteiAke0JSQU5DSH0gXTsgdGhlbiBnaXQgY2xvbmUgJHtHSVRfQUREUkVTU30gLjsgZWxzZSBnaXQgY2xvbmUgLS1zaW5nbGUtYnJhbmNoIC0tYnJhbmNoICR7QlJBTkNIfSAke0dJVF9BRERSRVNTfSAuOyBmaTsgZmlcbmlmIFsgLWYgL21udC9zZXJ2ZXIvcGFja2FnZS5qc29uIF07IHRoZW4gaWYgWyBcIiR7UEFDS0FHRV9NQU5BR0VSfVwiID09IFwibnBtXCIgXTsgdGhlbiBybSAtcmYgbm9kZV9tb2R1bGVzIHBhY2thZ2UtbG9jay5qc29uOyB5ZXMgXCJcIiB8IG5wbSBpbnN0YWxsIC0tcHJvZHVjdGlvbiAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGVsc2Ugcm0gLWYgcGFja2FnZS1sb2NrLmpzb247IHllcyB8IHlhcm4gaW5zdGFsbCAtLXByb2R1Y3Rpb24gLS1ub24taW50ZXJhY3RpdmUgLS1pZ25vcmUtZW5naW5lczsgZmk7IGZpXG5yZXFfZmlsZT0ke1JFUVVJUkVNRU5UU19GSUxFOi1yZXF1aXJlbWVudHMudHh0fVxuaWYgWyAtZiAvbW50L3NlcnZlci8kcmVxX2ZpbGUgXTsgdGhlbiBwaXAgaW5zdGFsbCAtciAkcmVxX2ZpbGU7IGZpXG5lY2hvIGluc3RhbGwgY29tcGxldGVcbmV4aXQgMCIsICJjb250YWluZXIiOiAiZGViaWFuOmJ1bGxzZXllLXNsaW0iLCAiZW50cnlwb2ludCI6ICJiYXNoIn19LCAidmFyaWFibGVzIjogW3sibmFtZSI6ICJHVU5BS0FOIEZJTEUgVVBMT0FEIE1BTlVBTD8iLCAiZGVzY3JpcHRpb24iOiAiVXBsb2FkIG1hbnVhbCAoMSkgYXRhdSBnaXQgY2xvbmUgKDApLiBSZWluc3RhbGwgU2VydmVyIHVudHVrIGFwcGx5IGdpdC4iLCAiZW52X3ZhcmlhYmxlIjogIlVTRVJfVVBMT0FEIiwgImRlZmF1bHRfdmFsdWUiOiAiMSIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8Ym9vbGVhbiIsICJmaWVsZF90eXBlIjogInRleHQifSwgeyJuYW1lIjogIlBBQ0tBR0UgTUFOQUdFUiAoWUFSTiAvIE5QTSkiLCAiZGVzY3JpcHRpb24iOiAieWFybiBhdGF1IG5wbSIsICJlbnZfdmFyaWFibGUiOiAiUEFDS0FHRV9NQU5BR0VSIiwgImRlZmF1bHRfdmFsdWUiOiAieWFybiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nfGluOnlhcm4sbnBtIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9LCB7Im5hbWUiOiAiRklMRSBVVEFNQSBTQ1JJUFQgKEVOVFJZIEZJTEUpIiwgImRlc2NyaXB0aW9uIjogIkNvbnRvaDogeWFybiBzdGFydCwgbnBtIHN0YXJ0LCBweXRob24gbWFpbi5weSIsICJlbnZfdmFyaWFibGUiOiAiQ01EX1JVTiIsICJkZWZhdWx0X3ZhbHVlIjogInlhcm4gc3RhcnQiLCAidXNlcl92aWV3YWJsZSI6IHRydWUsICJ1c2VyX2VkaXRhYmxlIjogdHJ1ZSwgInJ1bGVzIjogInJlcXVpcmVkfHN0cmluZyIsICJmaWVsZF90eXBlIjogInRleHQifSwgeyJuYW1lIjogIkZJTEUgTElCUkFSWSAvIFJFUVVJUkVNRU5UUyIsICJkZXNjcmlwdGlvbiI6ICJyZXF1aXJlbWVudHMudHh0IiwgImVudl92YXJpYWJsZSI6ICJSRVFVSVJFTUVOVFNfRklMRSIsICJkZWZhdWx0X3ZhbHVlIjogInJlcXVpcmVtZW50cy50eHQiLCAidXNlcl92aWV3YWJsZSI6IHRydWUsICJ1c2VyX2VkaXRhYmxlIjogdHJ1ZSwgInJ1bGVzIjogIm51bGxhYmxlfHN0cmluZyIsICJmaWVsZF90eXBlIjogInRleHQifSwgeyJuYW1lIjogIkxJTksgUkVQT1NJVE9SSSBHSVQgKE9QU0lPTkFMKSIsICJkZXNjcmlwdGlvbiI6ICJVUkwgZ2l0aHViIHJlcG8uIFdhamliIFJlaW5zdGFsbCBTZXJ2ZXIuIiwgImVudl92YXJpYWJsZSI6ICJHSVRfQUREUkVTUyIsICJkZWZhdWx0X3ZhbHVlIjogIiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9LCB7Im5hbWUiOiAiSW5zdGFsbCBCcmFuY2giLCAiZGVzY3JpcHRpb24iOiAiQnJhbmNoIGdpdCIsICJlbnZfdmFyaWFibGUiOiAiQlJBTkNIIiwgImRlZmF1bHRfdmFsdWUiOiAiIiwgInVzZXJfdmlld2FibGUiOiB0cnVlLCAidXNlcl9lZGl0YWJsZSI6IHRydWUsICJydWxlcyI6ICJudWxsYWJsZXxzdHJpbmciLCAiZmllbGRfdHlwZSI6ICJ0ZXh0In0sIHsibmFtZSI6ICJBdXRvIFVwZGF0ZSIsICJkZXNjcmlwdGlvbiI6ICIxPXB1bGwgb24gc3RhcnQiLCAiZW52X3ZhcmlhYmxlIjogIkFVVE9fVVBEQVRFIiwgImRlZmF1bHRfdmFsdWUiOiAiMSIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8Ym9vbGVhbiIsICJmaWVsZF90eXBlIjogInRleHQifSwgeyJuYW1lIjogIkNsb3VkZmxhcmVkIFRva2VuIiwgImRlc2NyaXB0aW9uIjogIlRva2VuIGNsb3VkZmxhcmUgdHVubmVsIiwgImVudl92YXJpYWJsZSI6ICJDTE9VREZMQVJFRF9UT0tFTiIsICJkZWZhdWx0X3ZhbHVlIjogIiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9LCB7Im5hbWUiOiAiR2l0IFVzZXJuYW1lIiwgImRlc2NyaXB0aW9uIjogIkdpdCB1c2VyIiwgImVudl92YXJpYWJsZSI6ICJVU0VSTkFNRSIsICJkZWZhdWx0X3ZhbHVlIjogIiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9LCB7Im5hbWUiOiAiR2l0IEFjY2VzcyBUb2tlbiIsICJkZXNjcmlwdGlvbiI6ICJHaXQgdG9rZW4iLCAiZW52X3ZhcmlhYmxlIjogIkFDQ0VTU19UT0tFTiIsICJkZWZhdWx0X3ZhbHVlIjogIiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9XX0="
+printf '%s' "$EGG_B64" | base64 -d > /tmp/egg.json
+
 
 python3 -c '
 import json, sys
