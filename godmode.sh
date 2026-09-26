@@ -178,42 +178,126 @@ export DEBCONF_NONINTERACTIVE_SEEN=true
 export COMPOSER_ALLOW_SUPERUSER=1
 
 # =========================================================
-# HEADER + INPUT
+# HEADER + DETECT + INPUT (hanya yang belum ada)
 # =========================================================
 
 banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER"
 
+PANEL_INSTALLED=0
+WINGS_INSTALLED=0
+DOCKER_INSTALLED=0
+[[ -f /var/www/pterodactyl/artisan ]] && PANEL_INSTALLED=1
+[[ -x /usr/local/bin/wings ]] && WINGS_INSTALLED=1
+command -v docker >/dev/null 2>&1 && DOCKER_INSTALLED=1
+
+PANEL_DOMAIN=""
+NODE_DOMAIN=""
+ADMIN_EMAIL=""
+ADMIN_USERNAME=""
+ADMIN_FIRSTNAME="Admin"
+ADMIN_LASTNAME="Rafz"
+ADMIN_PASSWORD=""
+PLTA=""
+PLTC=""
+
+# load data install sebelumnya
+if [[ -f "$RESULT_FILE" ]]; then
+    info "Data install sebelumnya: $RESULT_FILE"
+    while IFS='=' read -r k v; do
+        case "$k" in
+            PANEL) PANEL_DOMAIN="${v#https://}"; PANEL_DOMAIN="${PANEL_DOMAIN%%/*}" ;;
+            NODE) NODE_DOMAIN="${v#https://}"; NODE_DOMAIN="${NODE_DOMAIN%%/*}" ;;
+            EMAIL) ADMIN_EMAIL="$v" ;;
+            USERNAME) ADMIN_USERNAME="$v" ;;
+            PASSWORD) ADMIN_PASSWORD="$v" ;;
+            FIRSTNAME) ADMIN_FIRSTNAME="$v" ;;
+            LASTNAME) ADMIN_LASTNAME="$v" ;;
+            PLTA) PLTA="$v" ;;
+            PLTC) PLTC="$v" ;;
+        esac
+    done < <(grep -E '^(PANEL|NODE|EMAIL|USERNAME|PASSWORD|FIRSTNAME|LASTNAME|PLTA|PLTC)=' "$RESULT_FILE" 2>/dev/null || true)
+fi
+
+# deteksi domain dari sistem
+if [[ -z "$PANEL_DOMAIN" && -f /var/www/pterodactyl/.env ]]; then
+    PANEL_DOMAIN="$(grep -E '^APP_URL=' /var/www/pterodactyl/.env 2>/dev/null | head -1 | cut -d= -f2- | sed 's|https\?://||;s|/.*||' | tr -d '"' | tr -d "'")"
+fi
+if [[ -z "$NODE_DOMAIN" ]]; then
+    if [[ -f /etc/pterodactyl/config.yml ]]; then
+        NODE_DOMAIN="$(grep -oP 'remote:.*https?://\K[^/]+' /etc/pterodactyl/config.yml 2>/dev/null | head -1 || true)"
+    fi
+    if [[ -z "$NODE_DOMAIN" ]]; then
+        NODE_DOMAIN="$(ls /etc/letsencrypt/live 2>/dev/null | grep -v '^README$' | grep -v "^${PANEL_DOMAIN}$" | head -1 || true)"
+    fi
+fi
+
 echo
-echo "Masukkan konfigurasi domain dan akun Panel."
+echo "----- STATUS SISTEM -----"
+echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
+echo "Wings  : $([ $WINGS_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
+echo "Docker : $([ $DOCKER_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
+if [[ -n "$PANEL_DOMAIN" ]]; then echo "Domain panel terdeteksi : $PANEL_DOMAIN"; fi
+if [[ -n "$NODE_DOMAIN" ]]; then echo "Domain node terdeteksi  : $NODE_DOMAIN"; fi
+echo "-------------------------"
 echo
 
-printf "Domain Panel  : "
-read -r PANEL_DOMAIN
+ask() {
+    local __var="$1" __prompt="$2" __def="${3:-}" __secret="${4:-0}" __val=""
+    if [[ -n "$__def" ]]; then
+        if [[ "$__secret" == "1" ]]; then
+            printf "%s [tersimpan]: " "$__prompt"
+        else
+            printf "%s [%s]: " "$__prompt" "$__def"
+        fi
+    else
+        printf "%s: " "$__prompt"
+    fi
+    if [[ "$__secret" == "1" ]]; then
+        read -rs __val
+        echo
+    else
+        read -r __val
+    fi
+    [[ -z "$__val" ]] && __val="$__def"
+    printf -v "$__var" '%s' "$__val"
+}
 
-printf "Domain Node   : "
-read -r NODE_DOMAIN
-
-printf "Email Admin   : "
-read -r ADMIN_EMAIL
-
-printf "Username Admin: "
-read -r ADMIN_USERNAME
-
-printf "Nama Depan    : "
-read -r ADMIN_FIRSTNAME
-
-printf "Nama Belakang : "
-read -r ADMIN_LASTNAME
-
-printf "Password Admin: "
-read -rs ADMIN_PASSWORD
-echo
+if [[ $PANEL_INSTALLED -eq 1 ]]; then
+    # RESUME: hanya domain (bisa Enter pakai default) + akun kalau belum ada di file
+    info "Mode RESUME — tekan Enter untuk pakai nilai terdeteksi."
+    ask PANEL_DOMAIN "Domain Panel" "$PANEL_DOMAIN"
+    ask NODE_DOMAIN "Domain Node" "$NODE_DOMAIN"
+    if [[ -z "$ADMIN_EMAIL" ]]; then
+        ask ADMIN_EMAIL "Email Admin"
+    fi
+    if [[ -z "$ADMIN_USERNAME" ]]; then
+        ask ADMIN_USERNAME "Username Admin" "admin"
+    fi
+    if [[ -z "$ADMIN_PASSWORD" || "$ADMIN_PASSWORD" == "(sudah"* ]]; then
+        info "Password admin: pakai yang di $RESULT_FILE (tidak diminta ulang)"
+        [[ -z "$ADMIN_PASSWORD" ]] && ADMIN_PASSWORD="(lihat $RESULT_FILE)"
+    fi
+    [[ -z "$ADMIN_EMAIL" ]] && ADMIN_EMAIL="admin@gmail.com"
+    [[ -z "$ADMIN_USERNAME" ]] && ADMIN_USERNAME="admin"
+else
+    # INSTALL BARU: input lengkap
+    info "Mode INSTALL BARU — isi semua data."
+    ask PANEL_DOMAIN "Domain Panel" "$PANEL_DOMAIN"
+    ask NODE_DOMAIN "Domain Node" "$NODE_DOMAIN"
+    ask ADMIN_EMAIL "Email Admin" "${ADMIN_EMAIL:-}"
+    ask ADMIN_USERNAME "Username Admin" "${ADMIN_USERNAME:-admin}"
+    ask ADMIN_FIRSTNAME "Nama Depan" "${ADMIN_FIRSTNAME:-Admin}"
+    ask ADMIN_LASTNAME "Nama Belakang" "${ADMIN_LASTNAME:-Rafz}"
+    ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
+fi
 
 [[ -n "$PANEL_DOMAIN" ]]    || error_exit 1 "Domain Panel tidak boleh kosong."
 [[ -n "$NODE_DOMAIN" ]]     || error_exit 1 "Domain Node tidak boleh kosong."
 [[ -n "$ADMIN_EMAIL" ]]     || error_exit 1 "Email Admin tidak boleh kosong."
 [[ -n "$ADMIN_USERNAME" ]]  || error_exit 1 "Username Admin tidak boleh kosong."
-[[ -n "$ADMIN_PASSWORD" ]]  || error_exit 1 "Password Admin tidak boleh kosong."
+if [[ $PANEL_INSTALLED -eq 0 ]]; then
+    [[ -n "$ADMIN_PASSWORD" ]] || error_exit 1 "Password Admin tidak boleh kosong."
+fi
 [[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
 
 LOCATION_SHORT="RafzHost"
@@ -230,10 +314,13 @@ UPLOAD_SIZE="100"
 EGG_NEST_NAME="bot"
 
 echo
-info "Location : $LOCATION_SHORT"
-info "Node     : $NODE_NAME"
-info "Ports    : $ALLOCATION_START-$ALLOCATION_END"
-info "Nest     : $EGG_NEST_NAME"
+info "Mode      : $([ "$PANEL_INSTALLED" -eq 1 ] && echo 'RESUME / FIX' || echo 'INSTALL BARU')"
+info "Panel     : $PANEL_DOMAIN"
+info "Node      : $NODE_DOMAIN"
+info "Admin     : $ADMIN_USERNAME <$ADMIN_EMAIL>"
+info "Location  : $LOCATION_SHORT"
+info "Ports     : $ALLOCATION_START-$ALLOCATION_END"
+info "Nest      : $EGG_NEST_NAME"
 echo
 
 # =========================================================
@@ -866,32 +953,40 @@ if [[ ! -x /usr/local/bin/wings ]]; then
     chmod +x /usr/local/bin/wings
 fi
 
-# pastikan Docker terpasang (wajib untuk Wings)
-if ! command -v docker >/dev/null 2>&1; then
-    info "Docker belum ada — install..."
-    set +e
-    curl -fsSL https://get.docker.com | sh
-    DOCKER_RC=$?
-    set -e
-    if [[ $DOCKER_RC -ne 0 ]] || ! command -v docker >/dev/null 2>&1; then
-        error_exit 1 "Gagal install Docker"
+# pastikan Docker terpasang + service aktif
+if ! systemctl list-unit-files 2>/dev/null | grep -q '^docker\.service'; then
+    if ! command -v docker >/dev/null 2>&1; then
+        info "Docker belum ada — install via get.docker.com..."
+        set +e
+        curl -fsSL https://get.docker.com | sh
+        DOCKER_RC=$?
+        set -e
+        [[ $DOCKER_RC -eq 0 ]] || error_exit 1 "Gagal install Docker"
     fi
 fi
 
-# enable docker (nama unit bisa docker.service)
-systemctl enable --now docker 2>/dev/null || systemctl enable --now docker.socket 2>/dev/null || true
-sleep 2
-if ! docker info >/dev/null 2>&1; then
-    warn "Docker belum siap, coba start ulang..."
-    systemctl start docker 2>/dev/null || true
-    sleep 3
-fi
-docker info >/dev/null 2>&1 || error_exit 1 "Docker tidak berjalan"
+# enable docker (beberapa distro pake docker.socket dulu)
+systemctl enable docker.socket 2>/dev/null || true
+systemctl start docker.socket 2>/dev/null || true
+systemctl enable docker 2>/dev/null || true
+systemctl start docker 2>/dev/null || true
+systemctl enable --now docker 2>/dev/null || true
 
-# buat systemd unit kalau belum ada
-if [[ ! -f /etc/systemd/system/wings.service ]]; then
-    info "Membuat wings.service..."
-    cat > /etc/systemd/system/wings.service << 'WINGSEOF'
+if ! systemctl is-active --quiet docker 2>/dev/null && ! docker info >/dev/null 2>&1; then
+    warn "docker.service belum active, coba start ulang..."
+    systemctl reset-failed docker 2>/dev/null || true
+    systemctl start docker 2>/dev/null || true
+    sleep 2
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    error_exit 1 "Docker tidak berjalan. Cek: systemctl status docker"
+fi
+ok "Docker siap."
+
+# buat / update systemd unit wings
+info "Menulis wings.service..."
+cat > /etc/systemd/system/wings.service << 'WINGSEOF'
 [Unit]
 Description=Pterodactyl Wings Daemon
 After=docker.service
@@ -911,10 +1006,6 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 WINGSEOF
-else
-    # pastikan unit tidak pakai Requires=docker yang bikin gagal total
-    sed -i 's/^Requires=docker.service/Wants=docker.service/' /etc/systemd/system/wings.service 2>/dev/null || true
-fi
 
 # pastikan config.yml ada
 if [[ ! -s /etc/pterodactyl/config.yml ]]; then
@@ -1113,6 +1204,17 @@ systemctl restart php8.3-fpm 2>/dev/null || systemctl restart php8.2-fpm 2>/dev/
 systemctl reload nginx 2>/dev/null || true
 ok "Cache Panel bersih."
 
+# jangan overwrite password dengan placeholder
+SAVE_PASSWORD="$ADMIN_PASSWORD"
+# kalau placeholder / kosong, ambil dari file hasil sebelumnya
+if [[ -z "$SAVE_PASSWORD" || "$SAVE_PASSWORD" == "(sudah"* || "$SAVE_PASSWORD" == "(lihat"* ]]; then
+    OLD_PW="$(grep -E '^PASSWORD=' "$RESULT_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+    if [[ -n "$OLD_PW" && "$OLD_PW" != "(sudah"* && "$OLD_PW" != "(lihat"* ]]; then
+        SAVE_PASSWORD="$OLD_PW"
+    fi
+fi
+[[ -z "$SAVE_PASSWORD" ]] && SAVE_PASSWORD="(tidak tersimpan — set manual di panel)"
+
 cat > "$RESULT_FILE" <<DATA
 =========================================================
 RAFZHOST PTERODACTYL INSTALLATION
@@ -1121,6 +1223,9 @@ PANEL=https://$PANEL_DOMAIN
 NODE=https://$NODE_DOMAIN
 EMAIL=$ADMIN_EMAIL
 USERNAME=$ADMIN_USERNAME
+PASSWORD=$SAVE_PASSWORD
+FIRSTNAME=$ADMIN_FIRSTNAME
+LASTNAME=$ADMIN_LASTNAME
 LOCATION_ID=$LOCATION_ID
 NODE_ID=$NODE_ID
 NEST_ID=$NEST_ID
@@ -1137,15 +1242,39 @@ rm -f /tmp/egg.json /tmp/egg_import.json /tmp/rafz_egg.php
 rm -f "$WORK_DIR/create_keys.php" "$WORK_DIR/node-config.raw"
 
 banner "INSTALLASI SELESAI"
-echo "Panel       : https://$PANEL_DOMAIN"
-echo "Node        : https://$NODE_DOMAIN"
-echo "Location ID : $LOCATION_ID"
-echo "Node ID     : $NODE_ID"
-echo "Nest ID     : $NEST_ID"
-echo "Egg ID      : $EGG_ID  ($IMPORT_METHOD)"
-echo "Allocation  : $PUBLIC_IP:$ALLOCATION_START-$ALLOCATION_END"
 echo
-echo "Data        : $RESULT_FILE"
-echo "Log         : $LOG_FILE"
+echo "========================================="
+echo "  DATA LOGIN PANEL"
+echo "========================================="
+echo " URL      : https://$PANEL_DOMAIN"
+echo " Email    : $ADMIN_EMAIL"
+echo " Username : $ADMIN_USERNAME"
+echo " Password : $SAVE_PASSWORD"
+echo "========================================="
+echo
+echo "========================================="
+echo "  API KEYS"
+echo "========================================="
+echo " PLTA     : $PLTA"
+echo " PLTC     : $PLTC"
+echo "========================================="
+echo
+echo "========================================="
+echo "  NODE / IDS"
+echo "========================================="
+echo " Node URL : https://$NODE_DOMAIN"
+echo " Daemon   : https://$NODE_DOMAIN:$DAEMON_PORT"
+echo " Location : $LOCATION_ID"
+echo " Node ID  : $NODE_ID"
+echo " Nest ID  : $NEST_ID"
+echo " Egg ID   : $EGG_ID  ($IMPORT_METHOD)"
+echo " Alloc    : $PUBLIC_IP:$ALLOCATION_START-$ALLOCATION_END"
+echo "========================================="
+echo
+echo " File data : $RESULT_FILE"
+echo " Log       : $LOG_FILE"
 echo
 ok "Panel + Wings + Location + Node + Allocation + Egg selesai."
+echo
+info "Login: https://$PANEL_DOMAIN  |  $ADMIN_USERNAME / $SAVE_PASSWORD"
+
