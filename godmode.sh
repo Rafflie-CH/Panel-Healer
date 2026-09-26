@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 # =========================================================
 # RAFZHOST - GOD MODE INSTALLER
-# Pterodactyl Panel + Wings + Location + Node + Allocation + Egg
-# Installer: pterodactyl-installer v1.3.0
+# Panel + Wings + Location + Node + Allocation + Egg
+# Auto-handle: LE rate limit, missing cert, hairpin NAT
 # =========================================================
 
 INSTALLER_BASE="https://raw.githubusercontent.com/pterodactyl-installer/pterodactyl-installer"
@@ -78,6 +78,91 @@ run_step() {
     banner "$2"
 }
 
+# ---------- SSL helpers (rate limit safe) ----------
+ensure_ssl_cert() {
+    local domain="$1"
+    local le_live="/etc/letsencrypt/live/${domain}"
+    local ssl_dir="/etc/ssl"
+    local cert_pem="${ssl_dir}/${domain}.pem"
+    local cert_key="${ssl_dir}/${domain}.key"
+
+    mkdir -p "$ssl_dir"
+
+    # 1) pakai LE yang sudah ada
+    if [[ -f "${le_live}/fullchain.pem" && -f "${le_live}/privkey.pem" ]]; then
+        info "Pakai cert Let's Encrypt yang sudah ada: $domain"
+        ln -sfn "${le_live}/fullchain.pem" "$cert_pem"
+        ln -sfn "${le_live}/privkey.pem" "$cert_key"
+        # perbaiki path di nginx
+        find /etc/nginx -type f 2>/dev/null | while read -r f; do
+            sed -i \
+                -e "s|/etc/ssl/${domain}\\.pem|${le_live}/fullchain.pem|g" \
+                -e "s|/etc/ssl/${domain}\\.key|${le_live}/privkey.pem|g" \
+                -e "s|ssl_certificate .*${domain}.*pem;|ssl_certificate ${le_live}/fullchain.pem;|g" \
+                -e "s|ssl_certificate_key .*${domain}.*key;|ssl_certificate_key ${le_live}/privkey.pem;|g" \
+                "$f" 2>/dev/null || true
+        done
+        return 0
+    fi
+
+    # 2) coba certbot non-interactive (abaikan rate limit)
+    if command -v certbot >/dev/null 2>&1; then
+        info "Coba certbot untuk $domain (non-interactive)..."
+        set +e
+        certbot certonly --nginx --non-interactive --agree-tos --no-eff-email \
+            -m "${ADMIN_EMAIL:-admin@localhost}" -d "$domain" \
+            --keep-until-expiring --expand 2>&1 | tail -20
+        set -e
+        if [[ -f "${le_live}/fullchain.pem" ]]; then
+            ok "Certbot OK untuk $domain"
+            ln -sfn "${le_live}/fullchain.pem" "$cert_pem"
+            ln -sfn "${le_live}/privkey.pem" "$cert_key"
+            return 0
+        fi
+        warn "Certbot gagal / rate limit — fallback self-signed"
+    fi
+
+    # 3) self-signed fallback
+    if [[ ! -f "$cert_pem" || ! -f "$cert_key" ]]; then
+        info "Generate self-signed SSL untuk $domain"
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout "$cert_key" \
+            -out "$cert_pem" \
+            -subj "/CN=${domain}" >/dev/null 2>&1
+    fi
+
+    find /etc/nginx -type f 2>/dev/null | while read -r f; do
+        sed -i \
+            -e "s|ssl_certificate .*;|ssl_certificate ${cert_pem};|g" \
+            -e "s|ssl_certificate_key .*;|ssl_certificate_key ${cert_key};|g" \
+            "$f" 2>/dev/null || true
+        # only touch files that mention this domain
+        if grep -q "$domain" "$f" 2>/dev/null; then
+            sed -i \
+                -e "s|/etc/ssl/${domain}\\.pem|${cert_pem}|g" \
+                -e "s|/etc/ssl/${domain}\\.key|${cert_key}|g" \
+                "$f" 2>/dev/null || true
+        fi
+    done
+
+    ok "SSL siap (self-signed/existing) untuk $domain"
+}
+
+fix_nginx_ssl() {
+    local domain="$1"
+    ensure_ssl_cert "$domain"
+    set +e
+    nginx -t 2>&1
+    local rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+        warn "nginx -t masih gagal, coba perbaiki path cert..."
+        ensure_ssl_cert "$domain"
+        nginx -t || error_exit 1 "nginx config test gagal setelah fix SSL"
+    fi
+    systemctl reload nginx 2>/dev/null || systemctl restart nginx || true
+}
+
 # =========================================================
 # ROOT CHECK
 # =========================================================
@@ -85,10 +170,6 @@ run_step() {
 if [[ $EUID -ne 0 ]]; then
     error_exit 1 "Installer wajib dijalankan sebagai root."
 fi
-
-# =========================================================
-# NON INTERACTIVE
-# =========================================================
 
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
@@ -135,26 +216,17 @@ echo
 [[ -n "$ADMIN_PASSWORD" ]]  || error_exit 1 "Password Admin tidak boleh kosong."
 [[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
 
-# =========================================================
-# DEFAULT CONFIG
-# =========================================================
-
 LOCATION_SHORT="RafzHost"
 LOCATION_LONG="RAFZHOST Indonesia"
-
 NODE_NAME="RAFZHOST-NODE-01"
 NODE_DESCRIPTION="RAFZHOST Pterodactyl Node"
-
 ALLOCATION_START="2000"
 ALLOCATION_END="2999"
-
 DAEMON_PORT="8080"
 SFTP_PORT="2022"
-
 MEMORY_OVERALLOCATE="0"
 DISK_OVERALLOCATE="0"
 UPLOAD_SIZE="100"
-
 EGG_NEST_NAME="bot"
 
 echo
@@ -171,7 +243,6 @@ echo
 run_step "01" "[01] Pengecekan sistem"
 
 . /etc/os-release
-
 ARCH="$(uname -m)"
 
 case "$ARCH" in
@@ -182,8 +253,7 @@ esac
 case "$ID:$VERSION_ID" in
     ubuntu:22.04|ubuntu:24.04|debian:11|debian:12|debian:13) ;;
     *)
-        echo "OS belum divalidasi:"
-        echo "$PRETTY_NAME"
+        echo "OS belum divalidasi: $PRETTY_NAME"
         error_exit 1 "OS tidak didukung"
         ;;
 esac
@@ -201,18 +271,8 @@ run_step "02" "[02] Install dependency dasar"
 apt-get update --allow-releaseinfo-change -y || error_exit 1 "apt-get update gagal"
 
 apt-get install -y \
-    ca-certificates \
-    curl \
-    wget \
-    gnupg \
-    jq \
-    unzip \
-    git \
-    redis-server \
-    openssl \
-    dnsutils \
-    lsof \
-    python3 \
+    ca-certificates curl wget gnupg jq unzip git \
+    redis-server openssl dnsutils lsof python3 \
     || error_exit 1 "Gagal install dependency dasar"
 
 ok "Dependency dasar siap."
@@ -224,8 +284,6 @@ ok "Dependency dasar siap."
 run_step "03" "[03] Deteksi IP VPS"
 
 PUBLIC_IP=""
-
-# coba beberapa sumber eksternal
 for url in \
     "https://api.ipify.org" \
     "https://ifconfig.me/ip" \
@@ -237,7 +295,6 @@ do
     case "$tmp" in
         *[!0-9.]*|'') continue ;;
         *)
-            # harus ada tepat 3 titik
             dots="${tmp//[^.]/}"
             if [[ ${#dots} -eq 3 ]]; then
                 PUBLIC_IP="$tmp"
@@ -247,7 +304,6 @@ do
     esac
 done
 
-# fallback interface lokal
 if [[ -z "$PUBLIC_IP" ]]; then
     tmp="$(hostname -I 2>/dev/null | tr ' ' '\n' | head -1 || true)"
     tmp="$(printf '%s' "$tmp" | tr -d '[:space:]')"
@@ -272,7 +328,6 @@ if [[ -z "$PUBLIC_IP" ]]; then
     esac
 fi
 
-# minta manual kalau masih kosong
 if [[ -z "$PUBLIC_IP" ]]; then
     echo
     echo "Gagal deteksi IPv4 otomatis."
@@ -281,16 +336,11 @@ if [[ -z "$PUBLIC_IP" ]]; then
     PUBLIC_IP="$(printf '%s' "$PUBLIC_IP" | tr -d '[:space:]')"
 fi
 
-# validasi final (pure bash, ga pake grep)
 case "$PUBLIC_IP" in
-    *[!0-9.]*|'')
-        error_exit 1 "IPv4 VPS tidak ditemukan / tidak valid: '$PUBLIC_IP'"
-        ;;
+    *[!0-9.]*|'') error_exit 1 "IPv4 VPS tidak valid: '$PUBLIC_IP'" ;;
 esac
 dots="${PUBLIC_IP//[^.]/}"
-if [[ ${#dots} -ne 3 ]]; then
-    error_exit 1 "IPv4 VPS tidak valid (format salah): '$PUBLIC_IP'"
-fi
+[[ ${#dots} -eq 3 ]] || error_exit 1 "IPv4 VPS format salah: '$PUBLIC_IP'"
 
 echo "VPS IPv4: $PUBLIC_IP"
 ok "IP terdeteksi."
@@ -308,20 +358,11 @@ echo "Panel DNS : ${PANEL_DNS:-TIDAK ADA}"
 echo "Node DNS  : ${NODE_DNS:-TIDAK ADA}"
 
 if [[ "$PANEL_DNS" != "$PUBLIC_IP" ]]; then
-    echo
-    echo "DNS Panel belum mengarah ke VPS."
-    echo "Domain : $PANEL_DOMAIN"
-    echo "DNS    : ${PANEL_DNS:-NONE}"
-    echo "VPS    : $PUBLIC_IP"
+    echo "DNS Panel belum ke VPS ($PANEL_DOMAIN => ${PANEL_DNS:-NONE}, VPS $PUBLIC_IP)"
     error_exit 1 "DNS Panel tidak match"
 fi
-
 if [[ "$NODE_DNS" != "$PUBLIC_IP" ]]; then
-    echo
-    echo "DNS Node belum mengarah ke VPS."
-    echo "Domain : $NODE_DOMAIN"
-    echo "DNS    : ${NODE_DNS:-NONE}"
-    echo "VPS    : $PUBLIC_IP"
+    echo "DNS Node belum ke VPS ($NODE_DOMAIN => ${NODE_DNS:-NONE}, VPS $PUBLIC_IP)"
     error_exit 1 "DNS Node tidak match"
 fi
 
@@ -333,45 +374,62 @@ ok "DNS terdeteksi dan sesuai IP VPS."
 
 run_step "05" "[05] Install Pterodactyl Panel"
 
-DB_PASSWORD="$(openssl rand -hex 24)"
+# skip full reinstall jika panel sudah ada
+if [[ -f /var/www/pterodactyl/artisan ]]; then
+    warn "Panel sudah terpasang — skip install, lanjut fix SSL + service"
+else
+    DB_PASSWORD="$(openssl rand -hex 24)"
 
-export FQDN="$PANEL_DOMAIN"
-export MYSQL_DB="panel"
-export MYSQL_USER="pterodactyl"
-export MYSQL_PASSWORD="$DB_PASSWORD"
-export timezone="Asia/Jakarta"
-export telemetry="false"
-export ASSUME_SSL="true"
-export CONFIGURE_LETSENCRYPT="true"
-export CONFIGURE_FIREWALL="true"
-export email="$ADMIN_EMAIL"
-export user_email="$ADMIN_EMAIL"
-export user_username="$ADMIN_USERNAME"
-export user_firstname="${ADMIN_FIRSTNAME:-Rafz}"
-export user_lastname="${ADMIN_LASTNAME:-Host}"
-export user_password="$ADMIN_PASSWORD"
+    export FQDN="$PANEL_DOMAIN"
+    export MYSQL_DB="panel"
+    export MYSQL_USER="pterodactyl"
+    export MYSQL_PASSWORD="$DB_PASSWORD"
+    export timezone="Asia/Jakarta"
+    export telemetry="false"
+    # jangan paksa LE di installer — kita handle sendiri
+    export ASSUME_SSL="true"
+    export CONFIGURE_LETSENCRYPT="false"
+    export CONFIGURE_FIREWALL="true"
+    export email="$ADMIN_EMAIL"
+    export user_email="$ADMIN_EMAIL"
+    export user_username="$ADMIN_USERNAME"
+    export user_firstname="${ADMIN_FIRSTNAME:-Rafz}"
+    export user_lastname="${ADMIN_LASTNAME:-Host}"
+    export user_password="$ADMIN_PASSWORD"
 
-info "Mengambil installer resmi community installer $INSTALLER_VERSION..."
+    info "Mengambil installer resmi $INSTALLER_VERSION..."
+    curl -fsSL "$LIB_URL" -o /tmp/lib.sh || error_exit 1 "Gagal download lib.sh"
+    curl -fsSL "$PANEL_INSTALLER_URL" -o /tmp/panel-install.sh || error_exit 1 "Gagal download panel installer"
+    chmod +x /tmp/panel-install.sh
 
-curl -fsSL "$LIB_URL" -o /tmp/lib.sh || error_exit 1 "Gagal download lib.sh"
-curl -fsSL "$PANEL_INSTALLER_URL" -o /tmp/panel-install.sh || error_exit 1 "Gagal download panel installer"
+    # patch biar non-interactive
+    sed -i 's/read -r CONFIGURE_SSL/CONFIGURE_SSL=n/g' /tmp/panel-install.sh 2>/dev/null || true
+    sed -i 's/^\s*read -r /true #patched /g' /tmp/panel-install.sh 2>/dev/null || true
 
-chmod +x /tmp/panel-install.sh
-# shellcheck source=/dev/null
-source /tmp/lib.sh
+    # shellcheck source=/dev/null
+    source /tmp/lib.sh
 
-info "Menjalankan installer Panel..."
+    info "Menjalankan installer Panel..."
+    set +e
+    bash /tmp/panel-install.sh 2>&1
+    PANEL_RC=$?
+    set -e
 
-set +e
-bash /tmp/panel-install.sh 2>&1
-PANEL_RC=$?
-set -e
-
-if [[ $PANEL_RC -ne 0 || ! -f /var/www/pterodactyl/artisan ]]; then
-    error_exit 1 "Panel tidak terpasang dengan benar (rc=$PANEL_RC)"
+    if [[ $PANEL_RC -ne 0 || ! -f /var/www/pterodactyl/artisan ]]; then
+        error_exit 1 "Panel tidak terpasang dengan benar (rc=$PANEL_RC)"
+    fi
 fi
 
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+
+# SSL: LE existing / certbot / self-signed — jangan mati karena rate limit
+info "Setup SSL Panel (rate-limit safe)..."
+ensure_ssl_cert "$PANEL_DOMAIN"
+
+# pastikan APP_URL https
+if [[ -f /var/www/pterodactyl/.env ]]; then
+    sed -i "s|^APP_URL=.*|APP_URL=https://${PANEL_DOMAIN}|g" /var/www/pterodactyl/.env
+fi
 
 cd /var/www/pterodactyl
 php artisan optimize:clear >/dev/null 2>&1 || true
@@ -380,16 +438,11 @@ chown -R www-data:www-data /var/www/pterodactyl
 systemctl enable --now nginx 2>/dev/null || true
 systemctl enable --now mariadb 2>/dev/null || true
 systemctl enable --now redis-server 2>/dev/null || true
+[[ -f /etc/systemd/system/pteroq.service ]] && systemctl enable --now pteroq 2>/dev/null || true
 
-if [[ -f /etc/systemd/system/pteroq.service ]]; then
-    systemctl enable --now pteroq 2>/dev/null || true
-fi
-
-nginx -t || error_exit 1 "nginx config test gagal"
-systemctl restart nginx || error_exit 1 "gagal restart nginx"
+fix_nginx_ssl "$PANEL_DOMAIN"
 
 php artisan --version || error_exit 1 "php artisan gagal"
-
 systemctl is-active --quiet nginx   || error_exit 1 "Nginx tidak aktif"
 systemctl is-active --quiet mariadb || error_exit 1 "MariaDB tidak aktif"
 
@@ -401,32 +454,44 @@ ok "Panel terpasang dan service utama aktif."
 
 run_step "06" "[06] Install Wings"
 
-export FQDN="$NODE_DOMAIN"
-export EMAIL="$ADMIN_EMAIL"
-export CONFIGURE_FIREWALL="true"
-export CONFIGURE_LETSENCRYPT="true"
-export CONFIGURE_DBHOST="false"
+if [[ -x /usr/local/bin/wings ]]; then
+    warn "Wings binary sudah ada — skip install binary"
+else
+    export FQDN="$NODE_DOMAIN"
+    export EMAIL="$ADMIN_EMAIL"
+    export CONFIGURE_FIREWALL="true"
+    export CONFIGURE_LETSENCRYPT="false"
+    export CONFIGURE_DBHOST="false"
 
-curl -fsSL "$WINGS_INSTALLER_URL" -o /tmp/wings-install.sh || error_exit 1 "Gagal download wings installer"
-chmod +x /tmp/wings-install.sh
+    curl -fsSL "$WINGS_INSTALLER_URL" -o /tmp/wings-install.sh || error_exit 1 "Gagal download wings installer"
+    chmod +x /tmp/wings-install.sh
+    sed -i 's/^\s*read -r /true #patched /g' /tmp/wings-install.sh 2>/dev/null || true
 
-# shellcheck source=/dev/null
-source /tmp/lib.sh
+    # shellcheck source=/dev/null
+    source /tmp/lib.sh 2>/dev/null || true
 
-info "Menjalankan installer Wings..."
+    info "Menjalankan installer Wings..."
+    set +e
+    bash /tmp/wings-install.sh 2>&1
+    WINGS_RC=$?
+    set -e
 
-set +e
-bash /tmp/wings-install.sh 2>&1
-WINGS_RC=$?
-set -e
-
-if [[ $WINGS_RC -ne 0 || ! -x /usr/local/bin/wings ]]; then
-    error_exit 1 "Wings gagal dipasang (rc=$WINGS_RC)"
+    if [[ $WINGS_RC -ne 0 || ! -x /usr/local/bin/wings ]]; then
+        # fallback download binary langsung
+        warn "Installer wings gagal, coba download binary..."
+        ARCH_W="amd64"
+        case "$(uname -m)" in aarch64|arm64) ARCH_W="arm64" ;; esac
+        curl -fsSL "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_${ARCH_W}" \
+            -o /usr/local/bin/wings || error_exit 1 "Gagal download wings binary"
+        chmod +x /usr/local/bin/wings
+    fi
 fi
+
+# SSL node domain
+ensure_ssl_cert "$NODE_DOMAIN"
 
 systemctl daemon-reload
 systemctl enable wings >/dev/null 2>&1 || true
-
 ok "Wings binary dan service terpasang."
 
 # =========================================================
@@ -509,7 +574,6 @@ if [[ "$PLTC" == ptlc_* ]]; then
 else
     warn "PLTC gagal dibuat, proses tetap dilanjutkan."
 fi
-
 ok "PLTA berhasil dibuat."
 
 # =========================================================
@@ -560,15 +624,26 @@ api_error() {
     echo "$body" | jq -r '.errors[]?.detail // .message // empty' 2>/dev/null | paste -sd ' | ' - || echo "$body"
 }
 
+# pastikan hosts biar curl ke panel domain ga hairpin-fail
+sed -i "/[[:space:]]$PANEL_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
+echo "127.0.0.1 $PANEL_DOMAIN" >> /etc/hosts
+
 set +e
 LOCATIONS_JSON="$(api_get "$API_BASE/locations?per_page=100")"
 LOC_RC=$?
 set -e
 
 if [[ $LOC_RC -ne 0 ]]; then
-    error_exit 1 "PLTA tidak bisa mengakses Application API"
+    # coba sekali lagi setelah reload nginx
+    systemctl reload nginx 2>/dev/null || true
+    sleep 2
+    set +e
+    LOCATIONS_JSON="$(api_get "$API_BASE/locations?per_page=100")"
+    LOC_RC=$?
+    set -e
 fi
 
+[[ $LOC_RC -eq 0 ]] || error_exit 1 "PLTA tidak bisa mengakses Application API"
 ok "Application API dapat diakses."
 
 # =========================================================
@@ -595,32 +670,21 @@ else
             --arg long "$LOCATION_LONG" \
             '{ short: $short, long: $long }'
     )"
-
     set +e
     LOC_CREATE_RAW="$(api_post "$API_BASE/locations" "$LOCATION_BODY" 2>&1)"
     LOC_RC=$?
     set -e
-
     if [[ $LOC_RC -ne 0 ]]; then
-        echo
-        echo "API Location gagal:"
-        api_error "$LOC_CREATE_RAW"
-
+        echo "API Location gagal:"; api_error "$LOC_CREATE_RAW"
         LOCATIONS_JSON="$(api_get "$API_BASE/locations?per_page=100" 2>/dev/null || true)"
         LOCATION_ID="$(
             printf '%s' "$LOCATIONS_JSON" |
             jq -r --arg short "$LOCATION_SHORT" '
-                .data[]
-                | select(.attributes.short == $short)
-                | .attributes.id
+                .data[] | select(.attributes.short == $short) | .attributes.id
             ' | head -1
         )"
-
-        if [[ -n "$LOCATION_ID" && "$LOCATION_ID" != "null" ]]; then
-            ok "Location ternyata sudah dibuat. ID: $LOCATION_ID"
-        else
-            error_exit 1 "Gagal membuat Location"
-        fi
+        [[ -n "$LOCATION_ID" && "$LOCATION_ID" != "null" ]] || error_exit 1 "Gagal membuat Location"
+        ok "Location ternyata sudah dibuat. ID: $LOCATION_ID"
     else
         LOCATION_ID="$(
             printf '%s' "$LOC_CREATE_RAW" |
@@ -642,15 +706,12 @@ NODES_JSON="$(api_get "$API_BASE/nodes?per_page=100")" || error_exit 1 "Gagal am
 NODE_ID="$(
     printf '%s' "$NODES_JSON" |
     jq -r --arg fqdn "$NODE_DOMAIN" '
-        .data[]
-        | select(.attributes.fqdn == $fqdn)
-        | .attributes.id
+        .data[] | select(.attributes.fqdn == $fqdn) | .attributes.id
     ' | head -1
 )"
 
 RAM_MB="$(free -m | awk 'NR==2{print $2}')"
 DISK_MB="$(df -BM / | awk 'NR==2{gsub(/M/,""); print $4}')"
-
 (( RAM_MB > 512 ))  && RAM_MB=$((RAM_MB - 512))
 (( DISK_MB > 3072 )) && DISK_MB=$((DISK_MB - 3072))
 
@@ -671,50 +732,30 @@ else
             --argjson mo "$MEMORY_OVERALLOCATE" \
             --argjson do "$DISK_OVERALLOCATE" \
             '{
-                name: $name,
-                description: $desc,
-                location_id: $location_id,
-                fqdn: $fqdn,
-                scheme: "https",
-                behind_proxy: false,
-                public: true,
+                name: $name, description: $desc, location_id: $location_id,
+                fqdn: $fqdn, scheme: "https", behind_proxy: false, public: true,
                 daemon_base: "/var/lib/pterodactyl/volumes",
-                memory: $memory,
-                memory_overallocate: $mo,
-                disk: $disk,
-                disk_overallocate: $do,
-                upload_size: $upload,
-                daemon_sftp: $sftp,
-                daemon_listen: $listen,
+                memory: $memory, memory_overallocate: $mo,
+                disk: $disk, disk_overallocate: $do,
+                upload_size: $upload, daemon_sftp: $sftp, daemon_listen: $listen,
                 maintenance_mode: false
             }'
     )"
-
     set +e
     NODE_CREATE_RAW="$(api_post "$API_BASE/nodes" "$NODE_BODY" 2>&1)"
     NODE_RC=$?
     set -e
-
     if [[ $NODE_RC -ne 0 ]]; then
-        echo
-        echo "API Node gagal:"
-        api_error "$NODE_CREATE_RAW"
-
+        echo "API Node gagal:"; api_error "$NODE_CREATE_RAW"
         NODES_JSON="$(api_get "$API_BASE/nodes?per_page=100" 2>/dev/null || true)"
         NODE_ID="$(
             printf '%s' "$NODES_JSON" |
             jq -r --arg fqdn "$NODE_DOMAIN" '
-                .data[]
-                | select(.attributes.fqdn == $fqdn)
-                | .attributes.id
+                .data[] | select(.attributes.fqdn == $fqdn) | .attributes.id
             ' | head -1
         )"
-
-        if [[ -n "$NODE_ID" && "$NODE_ID" != "null" ]]; then
-            ok "Node ternyata sudah dibuat. ID: $NODE_ID"
-        else
-            error_exit 1 "Gagal membuat Node"
-        fi
+        [[ -n "$NODE_ID" && "$NODE_ID" != "null" ]] || error_exit 1 "Gagal membuat Node"
+        ok "Node ternyata sudah dibuat. ID: $NODE_ID"
     else
         NODE_ID="$(
             printf '%s' "$NODE_CREATE_RAW" |
@@ -752,19 +793,14 @@ else
             --arg ports "$ALLOCATION_START-$ALLOCATION_END" \
             '{ ip: $ip, alias: $alias, ports: [$ports] }'
     )"
-
     set +e
     ALLOC_RAW="$(api_post "$API_BASE/nodes/$NODE_ID/allocations" "$ALLOC_BODY" 2>&1)"
     ALLOC_RC=$?
     set -e
-
     if [[ $ALLOC_RC -ne 0 ]]; then
-        echo
-        echo "API Allocation gagal:"
-        api_error "$ALLOC_RAW"
+        echo "API Allocation gagal:"; api_error "$ALLOC_RAW"
         error_exit 1 "Gagal membuat Allocation"
     fi
-
     CREATED_COUNT="$(printf '%s' "$ALLOC_RAW" | jq '.data | length' 2>/dev/null || echo 0)"
     ok "Allocation berhasil dibuat: $CREATED_COUNT port."
 fi
@@ -777,7 +813,6 @@ run_step "12" "[12] Mengambil konfigurasi Wings dari Panel"
 
 CONFIG_RAW="$WORK_DIR/node-config.raw"
 CONFIG_YML="/etc/pterodactyl/config.yml"
-
 mkdir -p /etc/pterodactyl
 
 curl -fsS \
@@ -796,17 +831,13 @@ elif jq -e . "$CONFIG_RAW" >/dev/null 2>&1; then
         jq -r . "$CONFIG_RAW" > "$CONFIG_YML"
     fi
 else
-    echo
-    echo "Format konfigurasi Wings tidak dikenali:"
     head -40 "$CONFIG_RAW"
     error_exit 1 "Format config wings tidak valid"
 fi
 
 [[ -s "$CONFIG_YML" ]] || error_exit 1 "config.yml kosong"
-
 chmod 600 "$CONFIG_YML"
 chown root:root "$CONFIG_YML"
-
 ok "config.yml berhasil ditulis."
 
 # =========================================================
@@ -817,23 +848,17 @@ run_step "13" "[13] Menjalankan Wings"
 
 systemctl daemon-reload
 systemctl enable wings >/dev/null 2>&1 || true
+systemctl restart docker 2>/dev/null || true
 systemctl restart wings || error_exit 1 "Gagal restart wings"
-
 sleep 3
 
 if ! systemctl is-active --quiet wings; then
-    echo
-    echo "Wings tidak aktif."
-    echo
     echo "===== WINGS LOG ====="
     journalctl -u wings -n 50 --no-pager || true
-    echo "====================="
     error_exit 1 "Wings gagal start"
 fi
-
 ok "Wings aktif."
 
-# --- fix hairpin NAT + guzzle (dari panel manager) ---
 info "Fix /etc/hosts + GUZZLE timeout..."
 sed -i "/[[:space:]]$PANEL_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
 sed -i "/[[:space:]]$NODE_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
@@ -847,11 +872,9 @@ if [[ -f /var/www/pterodactyl/.env ]]; then
     echo 'GUZZLE_CONNECT_TIMEOUT=60' >> /var/www/pterodactyl/.env
 fi
 
-systemctl restart docker 2>/dev/null || true
 systemctl restart wings 2>/dev/null || true
 sleep 2
-ok "Hosts + Guzzle + Docker/Wings di-refresh."
-
+ok "Hosts + Guzzle di-refresh."
 
 # =========================================================
 # 14 FINAL VALIDATION
@@ -862,7 +885,6 @@ run_step "14" "[14] Validasi akhir"
 cd /var/www/pterodactyl
 php artisan optimize:clear >/dev/null 2>&1 || true
 chown -R www-data:www-data /var/www/pterodactyl
-
 systemctl restart pteroq >/dev/null 2>&1 || true
 systemctl restart nginx >/dev/null 2>&1 || true
 
@@ -886,10 +908,8 @@ curl -ksS --max-time 15 -o /dev/null -w 'Node HTTP  : %{http_code}\n' "https://$
 run_step "15" "[15] Import Egg — Nusantara Project GOD MODE"
 
 info "Menulis egg.json..."
-
 EGG_B64="eyJfY29tbWVudCI6ICJETyBOT1QgRURJVCIsICJtZXRhIjogeyJ2ZXJzaW9uIjogIlBURExfdjIiLCAidXBkYXRlX3VybCI6IG51bGx9LCAiZXhwb3J0ZWRfYXQiOiAiMjAyNi0wOC0yNFQwNjozNDowNiswNzowMCIsICJuYW1lIjogIk51c2FudGFyYSBQcm9qZWN0IC0gVUxUSU1BVEUgR09EIE1PREUgKFVuaWZpZWQpIiwgImF1dGhvciI6ICJyYWZ6aG9zdEByYWZ6aG9zdC5teS5pZCIsICJkZXNjcmlwdGlvbiI6ICJTYXR1IEVnZyB1bnR1ayBtZW5ndWFzYWkgc2VtdWFueWEuIEJpc2Egc3dpdGNoIGFudGFyYSBZQVJOIC8gTlBNIGxhbmdzdW5nIGRhcmkgcGFuZWwuIiwgImZlYXR1cmVzIjogW10sICJkb2NrZXJfaW1hZ2VzIjogeyJOb2RlSlMgMjQiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzI0IiwgIk5vZGVKUyAyMyI6ICJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjMiLCAiTm9kZUpTIDIyIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOm5vZGVqc18yMiIsICJOb2RlSlMgMjEiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzIxIiwgIk5vZGVKUyAyMCI6ICJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjAiLCAiTm9kZUpTIDE5IjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOm5vZGVqc18xOSIsICJOb2RlSlMgMTgiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzE4IiwgIk5vZGVKUyAxNyI6ICJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTciLCAiTm9kZUpTIDE2IjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOm5vZGVqc18xNiIsICJOb2RlSlMgMTUiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzE1IiwgIlB5dGhvbiAzLjEyIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjEyIiwgIlB5dGhvbiAzLjExIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjExIiwgIlB5dGhvbiAzLjEwIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjEwIiwgIlB5dGhvbiAzLjkiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6cHl0aG9uXzMuOSIsICJQeXRob24gMy44IjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjgiLCAiRGViaWFuIE9TIChVbml2ZXJzYWwpIjogImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOmRlYmlhbiIsICJVYnVudHUgT1MgKFVuaXZlcnNhbCkiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6dWJ1bnR1In0sICJmaWxlX2RlbnlsaXN0IjogW10sICJzdGFydHVwIjogImlmIFtbIC1kIC5naXQgXV0gJiYgW1sgXCJ7e0FVVE9fVVBEQVRFfX1cIiA9PSBcIjFcIiBdXTsgdGhlbiBnaXQgcHVsbDsgZmk7IGlmIFtbICEgLXogJHtDTE9VREZMQVJFRF9UT0tFTn0gXV07IHRoZW4gZWNobyBcIk1lbXVsYWkgQ2xvdWRmbGFyZWQgVHVubmVsLi4uXCI7IHdnZXQgLXEgaHR0cHM6Ly9naXRodWIuY29tL2Nsb3VkZmxhcmUvY2xvdWRmbGFyZWQvcmVsZWFzZXMvbGF0ZXN0L2Rvd25sb2FkL2Nsb3VkZmxhcmVkLWxpbnV4LWFtZDY0IC1PIGNsb3VkZmxhcmVkICYmIGNobW9kICt4IGNsb3VkZmxhcmVkICYmIC4vY2xvdWRmbGFyZWQgdHVubmVsIC0tbm8tYXV0b3VwZGF0ZSBydW4gLS10b2tlbiAke0NMT1VERkxBUkVEX1RPS0VOfSA+IC9kZXYvbnVsbCAyPiYxICYgZmk7IHJlcV9maWxlPSR7UkVRVUlSRU1FTlRTX0ZJTEU6LXJlcXVpcmVtZW50cy50eHR9OyBpZiBbIC1mIC9ob21lL2NvbnRhaW5lci8kcmVxX2ZpbGUgXTsgdGhlbiBwaXAgaW5zdGFsbCAtciAkcmVxX2ZpbGU7IGZpOyBpZiBbIFwiJHtQQUNLQUdFX01BTkFHRVJ9XCIgPT0gXCJucG1cIiBdOyB0aGVuIGlmIFtbICEgLXogJHtOT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgXCJcIiB8IG5wbSBpbnN0YWxsICR7Tk9ERV9QQUNLQUdFU30gLS1sZWdhY3ktcGVlci1kZXBzIC0tbm8tZnVuZCAtLW5vLWF1ZGl0OyBmaTsgaWYgW1sgISAteiAke1VOTk9ERV9QQUNLQUdFU30gXV07IHRoZW4geWVzIFwiXCIgfCBucG0gdW5pbnN0YWxsICR7VU5OT0RFX1BBQ0tBR0VTfSAtLW5vLWZ1bmQgLS1uby1hdWRpdDsgZmk7IGlmIFsgLWYgL2hvbWUvY29udGFpbmVyL3BhY2thZ2UuanNvbiBdOyB0aGVuIHllcyBcIlwiIHwgbnBtIGluc3RhbGwgLS1sZWdhY3ktcGVlci1kZXBzIC0tbm8tZnVuZCAtLW5vLWF1ZGl0OyBmaTsgcm0gLXJmIC5ucG0gLmxvZyAuY2FjaGUgLS1mb3JjZTsgZWxzZSBpZiBbWyAhIC16ICR7Tk9ERV9QQUNLQUdFU30gXV07IHRoZW4geWVzIHwgeWFybiBhZGQgJHtOT0RFX1BBQ0tBR0VTfSAtLW5vbi1pbnRlcmFjdGl2ZSAtLWlnbm9yZS1lbmdpbmVzOyBmaTsgaWYgW1sgISAteiAke1VOTk9ERV9QQUNLQUdFU30gXV07IHRoZW4geWVzIHwgeWFybiByZW1vdmUgJHtVTk5PREVfUEFDS0FHRVN9IC0tbm9uLWludGVyYWN0aXZlOyBmaTsgaWYgWyAtZiAvaG9tZS9jb250YWluZXIvcGFja2FnZS5qc29uIF07IHRoZW4geWVzIHwgeWFybiBpbnN0YWxsIC0tbm9uLWludGVyYWN0aXZlIC0taWdub3JlLWVuZ2luZXM7IGZpOyBybSAtcmYgLm5wbSAubG9nIC5jYWNoZSAueWFybi1jYWNoZSAtLWZvcmNlOyBmaTsgaWYgW1sgISAteiAke0NVU1RPTV9FTlZJUk9OTUVOVF9WQVJJQUJMRVN9IF1dOyB0aGVuIHZhcnM9JChlY2hvICR7Q1VTVE9NX0VOVklST05NRU5UX1ZBUklBQkxFU30gfCB0ciBcIjtcIiBcIlxcblwiKTsgZm9yIGxpbmUgaW4gJHZhcnM7IGRvIGV4cG9ydCAkbGluZTsgZG9uZSBmaTsgZXZhbCAke0NNRF9SVU59OyIsICJjb25maWciOiB7ImZpbGVzIjogInt9IiwgInN0YXJ0dXAiOiAie1xyXG4gICAgXCJkb25lXCI6IFwicnVubmluZ1wiXHJcbn0iLCAibG9ncyI6ICJ7fSIsICJzdG9wIjogIl5eQyJ9LCAic2NyaXB0cyI6IHsiaW5zdGFsbGF0aW9uIjogeyJzY3JpcHQiOiAiIyEvYmluL2Jhc2hcbmFwdCB1cGRhdGVcbmFwdCBpbnN0YWxsIC15IGdpdCBjdXJsIHdnZXQganEgZmlsZSB1bnppcCBtYWtlIGdjYyBnKysgcHl0aG9uMyBweXRob24zLWRldiBweXRob24zLXBpcCBsaWJ0b29sXG5pZiBjb21tYW5kIC12IG5wbSAmPiAvZGV2L251bGw7IHRoZW4gbnBtIGluc3RhbGwgLWcgeWFybjsgZmlcbm1rZGlyIC1wIC9tbnQvc2VydmVyXG5jZCAvbW50L3NlcnZlclxuaWYgWyBcIiR7VVNFUl9VUExPQUR9XCIgPT0gXCJ0cnVlXCIgXSB8fCBbIFwiJHtVU0VSX1VQTE9BRH1cIiA9PSBcIjFcIiBdOyB0aGVuIGVjaG8gZG9uZTsgZXhpdCAwOyBmaVxuaWYgW1sgJHtHSVRfQUREUkVTU30gIT0gKi5naXQgXV07IHRoZW4gR0lUX0FERFJFU1M9JHtHSVRfQUREUkVTU30uZ2l0OyBmaVxuaWYgWyAteiBcIiR7VVNFUk5BTUV9XCIgXSAmJiBbIC16IFwiJHtBQ0NFU1NfVE9LRU59XCIgXTsgdGhlbiBlY2hvIGFub247IGVsc2UgR0lUX0FERFJFU1M9XCJodHRwczovLyR7VVNFUk5BTUV9OiR7QUNDRVNTX1RPS0VOfUAkKGVjaG8gLWUgJHtHSVRfQUREUkVTU30gfCBjdXQgLWQvIC1mMy0pXCI7IGZpXG5pZiBbIFwiJChscyAtQSAvbW50L3NlcnZlcilcIiBdOyB0aGVuIGlmIFsgLWQgLmdpdCBdICYmIFsgLWYgLmdpdC9jb25maWcgXTsgdGhlbiBPUklHSU49JChnaXQgY29uZmlnIC0tZ2V0IHJlbW90ZS5vcmlnaW4udXJsKTsgaWYgWyBcIiR7T1JJR0lOfVwiID09IFwiJHtHSVRfQUREUkVTU31cIiBdOyB0aGVuIGdpdCBwdWxsOyBmaTsgZmk7IGVsc2UgaWYgWyAteiAke0JSQU5DSH0gXTsgdGhlbiBnaXQgY2xvbmUgJHtHSVRfQUREUkVTU30gLjsgZWxzZSBnaXQgY2xvbmUgLS1zaW5nbGUtYnJhbmNoIC0tYnJhbmNoICR7QlJBTkNIfSAke0dJVF9BRERSRVNTfSAuOyBmaTsgZmlcbmlmIFsgLWYgL21udC9zZXJ2ZXIvcGFja2FnZS5qc29uIF07IHRoZW4gaWYgWyBcIiR7UEFDS0FHRV9NQU5BR0VSfVwiID09IFwibnBtXCIgXTsgdGhlbiBybSAtcmYgbm9kZV9tb2R1bGVzIHBhY2thZ2UtbG9jay5qc29uOyB5ZXMgXCJcIiB8IG5wbSBpbnN0YWxsIC0tcHJvZHVjdGlvbiAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGVsc2Ugcm0gLWYgcGFja2FnZS1sb2NrLmpzb247IHllcyB8IHlhcm4gaW5zdGFsbCAtLXByb2R1Y3Rpb24gLS1ub24taW50ZXJhY3RpdmUgLS1pZ25vcmUtZW5naW5lczsgZmk7IGZpXG5yZXFfZmlsZT0ke1JFUVVJUkVNRU5UU19GSUxFOi1yZXF1aXJlbWVudHMudHh0fVxuaWYgWyAtZiAvbW50L3NlcnZlci8kcmVxX2ZpbGUgXTsgdGhlbiBwaXAgaW5zdGFsbCAtciAkcmVxX2ZpbGU7IGZpXG5lY2hvIGluc3RhbGwgY29tcGxldGVcbmV4aXQgMCIsICJjb250YWluZXIiOiAiZGViaWFuOmJ1bGxzZXllLXNsaW0iLCAiZW50cnlwb2ludCI6ICJiYXNoIn19LCAidmFyaWFibGVzIjogW3sibmFtZSI6ICJHVU5BS0FOIEZJTEUgVVBMT0FEIE1BTlVBTD8iLCAiZGVzY3JpcHRpb24iOiAiVXBsb2FkIG1hbnVhbCAoMSkgYXRhdSBnaXQgY2xvbmUgKDApLiBSZWluc3RhbGwgU2VydmVyIHVudHVrIGFwcGx5IGdpdC4iLCAiZW52X3ZhcmlhYmxlIjogIlVTRVJfVVBMT0FEIiwgImRlZmF1bHRfdmFsdWUiOiAiMSIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8Ym9vbGVhbiIsICJmaWVsZF90eXBlIjogInRleHQifSwgeyJuYW1lIjogIlBBQ0tBR0UgTUFOQUdFUiAoWUFSTiAvIE5QTSkiLCAiZGVzY3JpcHRpb24iOiAieWFybiBhdGF1IG5wbSIsICJlbnZfdmFyaWFibGUiOiAiUEFDS0FHRV9NQU5BR0VSIiwgImRlZmF1bHRfdmFsdWUiOiAieWFybiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nfGluOnlhcm4sbnBtIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9LCB7Im5hbWUiOiAiRklMRSBVVEFNQSBTQ1JJUFQgKEVOVFJZIEZJTEUpIiwgImRlc2NyaXB0aW9uIjogIkNvbnRvaDogeWFybiBzdGFydCwgbnBtIHN0YXJ0LCBweXRob24gbWFpbi5weSIsICJlbnZfdmFyaWFibGUiOiAiQ01EX1JVTiIsICJkZWZhdWx0X3ZhbHVlIjogInlhcm4gc3RhcnQiLCAidXNlcl92aWV3YWJsZSI6IHRydWUsICJ1c2VyX2VkaXRhYmxlIjogdHJ1ZSwgInJ1bGVzIjogInJlcXVpcmVkfHN0cmluZyIsICJmaWVsZF90eXBlIjogInRleHQifSwgeyJuYW1lIjogIkZJTEUgTElCUkFSWSAvIFJFUVVJUkVNRU5UUyIsICJkZXNjcmlwdGlvbiI6ICJyZXF1aXJlbWVudHMudHh0IiwgImVudl92YXJpYWJsZSI6ICJSRVFVSVJFTUVOVFNfRklMRSIsICJkZWZhdWx0X3ZhbHVlIjogInJlcXVpcmVtZW50cy50eHQiLCAidXNlcl92aWV3YWJsZSI6IHRydWUsICJ1c2VyX2VkaXRhYmxlIjogdHJ1ZSwgInJ1bGVzIjogIm51bGxhYmxlfHN0cmluZyIsICJmaWVsZF90eXBlIjogInRleHQifSwgeyJuYW1lIjogIkxJTksgUkVQT1NJVE9SSSBHSVQgKE9QU0lPTkFMKSIsICJkZXNjcmlwdGlvbiI6ICJVUkwgZ2l0aHViIHJlcG8uIFdhamliIFJlaW5zdGFsbCBTZXJ2ZXIuIiwgImVudl92YXJpYWJsZSI6ICJHSVRfQUREUkVTUyIsICJkZWZhdWx0X3ZhbHVlIjogIiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9LCB7Im5hbWUiOiAiSW5zdGFsbCBCcmFuY2giLCAiZGVzY3JpcHRpb24iOiAiQnJhbmNoIGdpdCIsICJlbnZfdmFyaWFibGUiOiAiQlJBTkNIIiwgImRlZmF1bHRfdmFsdWUiOiAiIiwgInVzZXJfdmlld2FibGUiOiB0cnVlLCAidXNlcl9lZGl0YWJsZSI6IHRydWUsICJydWxlcyI6ICJudWxsYWJsZXxzdHJpbmciLCAiZmllbGRfdHlwZSI6ICJ0ZXh0In0sIHsibmFtZSI6ICJBdXRvIFVwZGF0ZSIsICJkZXNjcmlwdGlvbiI6ICIxPXB1bGwgb24gc3RhcnQiLCAiZW52X3ZhcmlhYmxlIjogIkFVVE9fVVBEQVRFIiwgImRlZmF1bHRfdmFsdWUiOiAiMSIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8Ym9vbGVhbiIsICJmaWVsZF90eXBlIjogInRleHQifSwgeyJuYW1lIjogIkNsb3VkZmxhcmVkIFRva2VuIiwgImRlc2NyaXB0aW9uIjogIlRva2VuIGNsb3VkZmxhcmUgdHVubmVsIiwgImVudl92YXJpYWJsZSI6ICJDTE9VREZMQVJFRF9UT0tFTiIsICJkZWZhdWx0X3ZhbHVlIjogIiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9LCB7Im5hbWUiOiAiR2l0IFVzZXJuYW1lIiwgImRlc2NyaXB0aW9uIjogIkdpdCB1c2VyIiwgImVudl92YXJpYWJsZSI6ICJVU0VSTkFNRSIsICJkZWZhdWx0X3ZhbHVlIjogIiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9LCB7Im5hbWUiOiAiR2l0IEFjY2VzcyBUb2tlbiIsICJkZXNjcmlwdGlvbiI6ICJHaXQgdG9rZW4iLCAiZW52X3ZhcmlhYmxlIjogIkFDQ0VTU19UT0tFTiIsICJkZWZhdWx0X3ZhbHVlIjogIiIsICJ1c2VyX3ZpZXdhYmxlIjogdHJ1ZSwgInVzZXJfZWRpdGFibGUiOiB0cnVlLCAicnVsZXMiOiAibnVsbGFibGV8c3RyaW5nIiwgImZpZWxkX3R5cGUiOiAidGV4dCJ9XX0="
 printf '%s' "$EGG_B64" | base64 -d > /tmp/egg.json
-
 
 python3 -c '
 import json, sys
@@ -904,7 +924,6 @@ print(f"EGG_OK startup={startup_len} vars={vars_count}")
 ' || error_exit 1 "egg.json tidak valid"
 
 info "Menulis PHP importer..."
-
 cat > /tmp/rafz_egg.php << 'PHP'
 <?php
 require "/var/www/pterodactyl/vendor/autoload.php";
@@ -913,10 +932,7 @@ $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
 $kernel->bootstrap();
 
 $eggData = json_decode(file_get_contents("/tmp/egg.json"), true);
-if (!$eggData) {
-    echo "EGG_JSON_ERROR\n";
-    exit(1);
-}
+if (!$eggData) { echo "EGG_JSON_ERROR\n"; exit(1); }
 
 $nestName = "bot";
 $nest = \Pterodactyl\Models\Nest::where("name", $nestName)->first();
@@ -990,18 +1006,15 @@ foreach (($eggData["variables"] ?? []) as $v) {
     $var->rules = $v["rules"] ?? "nullable|string";
     $var->save();
 }
-
 echo "EGG_ID=" . $egg->id . "\n";
 echo "IMPORT_METHOD=manual\n";
 PHP
 
 info "Menjalankan PHP importer..."
-
 set +e
 EGG_OUTPUT="$(cd /var/www/pterodactyl && php /tmp/rafz_egg.php 2>&1)"
 EGG_RC=$?
 set -e
-
 echo "$EGG_OUTPUT"
 
 EGG_ID="$(printf '%s\n' "$EGG_OUTPUT" | sed -n 's/^EGG_ID=//p' | head -1)"
@@ -1009,84 +1022,47 @@ NEST_ID="$(printf '%s\n' "$EGG_OUTPUT" | sed -n 's/^NEST_ID=//p' | head -1)"
 IMPORT_METHOD="$(printf '%s\n' "$EGG_OUTPUT" | sed -n 's/^IMPORT_METHOD=//p' | head -1)"
 
 if [[ -z "$EGG_ID" || "$EGG_ID" == "0" ]]; then
-    echo
-    echo "Egg import gagal. Output PHP:"
-    echo "$EGG_OUTPUT"
+    echo "Egg import gagal:"; echo "$EGG_OUTPUT"
     error_exit 1 "Egg import gagal"
 fi
-
 ok "Egg berhasil diimport. ID: $EGG_ID  Nest ID: $NEST_ID  Metode: $IMPORT_METHOD"
 
 info "Membersihkan cache Panel..."
-
 cd /var/www/pterodactyl
 php artisan config:clear >/dev/null 2>&1 || true
 php artisan cache:clear  >/dev/null 2>&1 || true
 php artisan view:clear   >/dev/null 2>&1 || true
 php artisan route:clear  >/dev/null 2>&1 || true
-
-chown -R www-data:www-data \
-    /var/www/pterodactyl/storage \
-    /var/www/pterodactyl/bootstrap/cache \
-    2>/dev/null || true
-
-chmod -R ug+rwx \
-    /var/www/pterodactyl/storage \
-    /var/www/pterodactyl/bootstrap/cache \
-    2>/dev/null || true
-
-systemctl restart php8.3-fpm 2>/dev/null || \
-systemctl restart php8.2-fpm 2>/dev/null || \
-systemctl restart php-fpm    2>/dev/null || true
-
+chown -R www-data:www-data /var/www/pterodactyl/storage /var/www/pterodactyl/bootstrap/cache 2>/dev/null || true
+chmod -R ug+rwx /var/www/pterodactyl/storage /var/www/pterodactyl/bootstrap/cache 2>/dev/null || true
+systemctl restart php8.3-fpm 2>/dev/null || systemctl restart php8.2-fpm 2>/dev/null || systemctl restart php-fpm 2>/dev/null || true
 systemctl reload nginx 2>/dev/null || true
-
-ok "Cache Panel bersih, FPM & nginx reload."
-
-# =========================================================
-# SAVE RESULT
-# =========================================================
+ok "Cache Panel bersih."
 
 cat > "$RESULT_FILE" <<DATA
 =========================================================
 RAFZHOST PTERODACTYL INSTALLATION
 =========================================================
-
 PANEL=https://$PANEL_DOMAIN
 NODE=https://$NODE_DOMAIN
-
 EMAIL=$ADMIN_EMAIL
 USERNAME=$ADMIN_USERNAME
-
 LOCATION_ID=$LOCATION_ID
 NODE_ID=$NODE_ID
 NEST_ID=$NEST_ID
 EGG_ID=$EGG_ID
-
 ALLOCATION=$PUBLIC_IP:$ALLOCATION_START-$ALLOCATION_END
-
 PLTA=$PLTA
 PLTC=$PLTC
-
 =========================================================
 DATA
-
 chmod 600 "$RESULT_FILE"
-
-# =========================================================
-# CLEAN
-# =========================================================
 
 rm -f /tmp/panel-install.sh /tmp/wings-install.sh /tmp/lib.sh
 rm -f /tmp/egg.json /tmp/egg_import.json /tmp/rafz_egg.php
 rm -f "$WORK_DIR/create_keys.php" "$WORK_DIR/node-config.raw"
 
-# =========================================================
-# SUCCESS
-# =========================================================
-
 banner "INSTALLASI SELESAI"
-
 echo "Panel       : https://$PANEL_DOMAIN"
 echo "Node        : https://$NODE_DOMAIN"
 echo "Location ID : $LOCATION_ID"
@@ -1098,5 +1074,4 @@ echo
 echo "Data        : $RESULT_FILE"
 echo "Log         : $LOG_FILE"
 echo
-
 ok "Panel + Wings + Location + Node + Allocation + Egg selesai."
