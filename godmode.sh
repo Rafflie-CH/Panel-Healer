@@ -225,42 +225,71 @@ run_step "03" "[03] Deteksi IP VPS"
 
 PUBLIC_IP=""
 
-# coba beberapa sumber
+# coba beberapa sumber eksternal
 for url in \
     "https://api.ipify.org" \
     "https://ifconfig.me/ip" \
     "https://icanhazip.com" \
     "https://checkip.amazonaws.com"
 do
-    PUBLIC_IP="$(curl -4fsS --max-time 8 "$url" 2>/dev/null || true)"
-    PUBLIC_IP="$(echo "$PUBLIC_IP" | tr -d '[:space:]')"
-    if echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
-        break
-    fi
-    PUBLIC_IP=""
+    tmp="$(curl -4fsS --max-time 8 "$url" 2>/dev/null || true)"
+    tmp="$(printf '%s' "$tmp" | tr -d '[:space:]')"
+    case "$tmp" in
+        *[!0-9.]*|'') continue ;;
+        *)
+            # harus ada tepat 3 titik
+            dots="${tmp//[^.]/}"
+            if [[ ${#dots} -eq 3 ]]; then
+                PUBLIC_IP="$tmp"
+                break
+            fi
+            ;;
+    esac
 done
 
-# fallback dari interface lokal
+# fallback interface lokal
 if [[ -z "$PUBLIC_IP" ]]; then
-    PUBLIC_IP="\( (hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)' | head -1 || true)"
-    PUBLIC_IP="$(echo "$PUBLIC_IP" | tr -d '[:space:]')"
+    tmp="$(hostname -I 2>/dev/null | tr ' ' '\n' | head -1 || true)"
+    tmp="$(printf '%s' "$tmp" | tr -d '[:space:]')"
+    case "$tmp" in
+        *[!0-9.]*|'') ;;
+        *)
+            dots="${tmp//[^.]/}"
+            [[ ${#dots} -eq 3 ]] && PUBLIC_IP="$tmp"
+            ;;
+    esac
 fi
 
 if [[ -z "$PUBLIC_IP" ]]; then
-    PUBLIC_IP="$(ip -4 addr show scope global 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}' | head -1 || true)"
-    PUBLIC_IP="$(echo "$PUBLIC_IP" | tr -d '[:space:]')"
+    tmp="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1 || true)"
+    tmp="$(printf '%s' "$tmp" | tr -d '[:space:]')"
+    case "$tmp" in
+        *[!0-9.]*|'') ;;
+        *)
+            dots="${tmp//[^.]/}"
+            [[ ${#dots} -eq 3 ]] && PUBLIC_IP="$tmp"
+            ;;
+    esac
 fi
 
-if ! echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
+# minta manual kalau masih kosong
+if [[ -z "$PUBLIC_IP" ]]; then
     echo
     echo "Gagal deteksi IPv4 otomatis."
     printf "Masukkan IPv4 VPS manual: "
     read -r PUBLIC_IP
-    PUBLIC_IP="$(echo "$PUBLIC_IP" | tr -d '[:space:]')"
+    PUBLIC_IP="$(printf '%s' "$PUBLIC_IP" | tr -d '[:space:]')"
 fi
 
-if ! echo "\( PUBLIC_IP" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ \)'; then
-    error_exit 1 "IPv4 VPS tidak ditemukan / tidak valid."
+# validasi final (pure bash, ga pake grep)
+case "$PUBLIC_IP" in
+    *[!0-9.]*|'')
+        error_exit 1 "IPv4 VPS tidak ditemukan / tidak valid: '$PUBLIC_IP'"
+        ;;
+esac
+dots="${PUBLIC_IP//[^.]/}"
+if [[ ${#dots} -ne 3 ]]; then
+    error_exit 1 "IPv4 VPS tidak valid (format salah): '$PUBLIC_IP'"
 fi
 
 echo "VPS IPv4: $PUBLIC_IP"
