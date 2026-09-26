@@ -846,9 +846,51 @@ ok "config.yml berhasil ditulis."
 
 run_step "13" "[13] Menjalankan Wings"
 
+# pastikan binary ada
+if [[ ! -x /usr/local/bin/wings ]]; then
+    info "Download wings binary..."
+    ARCH_W="amd64"
+    case "$(uname -m)" in aarch64|arm64) ARCH_W="arm64" ;; esac
+    curl -fsSL "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_${ARCH_W}" \
+        -o /usr/local/bin/wings || error_exit 1 "Gagal download wings binary"
+    chmod +x /usr/local/bin/wings
+fi
+
+# buat systemd unit kalau belum ada
+if [[ ! -f /etc/systemd/system/wings.service ]]; then
+    info "Membuat wings.service..."
+    cat > /etc/systemd/system/wings.service << 'WINGSEOF'
+[Unit]
+Description=Pterodactyl Wings Daemon
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+User=root
+WorkingDirectory=/etc/pterodactyl
+LimitNOFILE=4096
+PIDFile=/var/run/wings/daemon.pid
+ExecStart=/usr/local/bin/wings
+Restart=on-failure
+StartLimitInterval=180
+StartLimitBurst=30
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+WINGSEOF
+fi
+
+# pastikan config.yml ada
+if [[ ! -s /etc/pterodactyl/config.yml ]]; then
+    error_exit 1 "config.yml kosong — step 12 gagal?"
+fi
+
+# docker harus jalan
+systemctl enable --now docker 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable wings >/dev/null 2>&1 || true
-systemctl restart docker 2>/dev/null || true
 systemctl restart wings || error_exit 1 "Gagal restart wings"
 sleep 3
 
