@@ -163,7 +163,7 @@ MEMORY_OVERALLOCATE="0"
 DISK_OVERALLOCATE="0"
 UPLOAD_SIZE="100"
 
-EGG_NEST_NAME="Bot NodeJS"
+EGG_NEST_NAME="bot"
 
 echo
 info "Location : $LOCATION_SHORT"
@@ -809,7 +809,7 @@ curl -ksS --max-time 15 -o /dev/null -w 'Panel HTTP : %{http_code}\n' "https://$
 curl -ksS --max-time 15 -o /dev/null -w 'Node HTTP  : %{http_code}\n' "https://$NODE_DOMAIN:$DAEMON_PORT/api/system" || true
 
 # =========================================================
-# 15 IMPORT EGG (pakai yang lu kasih)
+# 15 IMPORT EGG
 # =========================================================
 
 run_step "15" "[15] Import Egg — Nusantara Project GOD MODE"
