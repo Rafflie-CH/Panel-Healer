@@ -101,7 +101,7 @@ export COMPOSER_ALLOW_SUPERUSER=1
 # HEADER + INPUT
 # =========================================================
 
-banner "RAFZHOST x PETRODACYL INSTALLER"
+banner "RAFZHOST PETRODACYL INSTALLER"
 
 echo
 echo "Masukkan konfigurasi domain dan akun Panel."
