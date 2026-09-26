@@ -351,11 +351,21 @@ ok "IP terdeteksi."
 
 run_step "04" "[04] Pengecekan DNS"
 
-PANEL_DNS="$(dig +short A "$PANEL_DOMAIN" 2>/dev/null | tail -1 || true)"
-NODE_DNS="$(dig +short A "$NODE_DOMAIN" 2>/dev/null | tail -1 || true)"
+# pakai DNS publik biar tidak kena /etc/hosts (127.0.0.1 dari run sebelumnya)
+PANEL_DNS="$(dig +short A "$PANEL_DOMAIN" @8.8.8.8 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | tail -1 || true)"
+NODE_DNS="$(dig +short A "$NODE_DOMAIN" @8.8.8.8 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | tail -1 || true)"
 
-echo "Panel DNS : ${PANEL_DNS:-TIDAK ADA}"
-echo "Node DNS  : ${NODE_DNS:-TIDAK ADA}"
+# fallback resolver lain
+if [[ -z "$PANEL_DNS" ]]; then
+    PANEL_DNS="$(dig +short A "$PANEL_DOMAIN" @1.1.1.1 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | tail -1 || true)"
+fi
+if [[ -z "$NODE_DNS" ]]; then
+    NODE_DNS="$(dig +short A "$NODE_DOMAIN" @1.1.1.1 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | tail -1 || true)"
+fi
+
+echo "Panel DNS (publik) : ${PANEL_DNS:-TIDAK ADA}"
+echo "Node DNS  (publik) : ${NODE_DNS:-TIDAK ADA}"
+echo "Catatan: entry 127.0.0.1 di /etc/hosts diabaikan (hairpin NAT)."
 
 if [[ "$PANEL_DNS" != "$PUBLIC_IP" ]]; then
     echo "DNS Panel belum ke VPS ($PANEL_DOMAIN => ${PANEL_DNS:-NONE}, VPS $PUBLIC_IP)"
@@ -366,7 +376,7 @@ if [[ "$NODE_DNS" != "$PUBLIC_IP" ]]; then
     error_exit 1 "DNS Node tidak match"
 fi
 
-ok "DNS terdeteksi dan sesuai IP VPS."
+ok "DNS publik terdeteksi dan sesuai IP VPS."
 
 # =========================================================
 # 05 PANEL
