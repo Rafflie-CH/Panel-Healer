@@ -137,11 +137,6 @@ echo
 [[ -n "$ADMIN_PASSWORD" ]]  || error_exit 1 "Password Admin tidak boleh kosong."
 [[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
 
-# simple email check
-email_regex='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
-if [[ ! "$ADMIN_EMAIL" =\~ $email_regex ]]; then
-    error_exit 1 "Format email admin tidak valid."
-fi
 
 # =========================================================
 # DEFAULT CONFIG
