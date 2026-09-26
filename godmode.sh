@@ -101,7 +101,7 @@ export COMPOSER_ALLOW_SUPERUSER=1
 # HEADER + INPUT
 # =========================================================
 
-banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER"
+banner "RAFZHOST x PETRODACYL INSTALLER"
 
 echo
 echo "Masukkan konfigurasi domain dan akun Panel."
