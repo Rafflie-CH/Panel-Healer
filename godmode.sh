@@ -138,7 +138,8 @@ echo
 [[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
 
 # simple email check
-if [[ ! "\( ADMIN_EMAIL" =\~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,} \) ]]; then
+email_regex='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+if [[ ! "$ADMIN_EMAIL" =\~ $email_regex ]]; then
     error_exit 1 "Format email admin tidak valid."
 fi
 
