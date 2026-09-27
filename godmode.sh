@@ -184,10 +184,21 @@ export COMPOSER_ALLOW_SUPERUSER=1
 banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER"
 
 PANEL_INSTALLED=0
+WINGS_BINARY=0
+WINGS_CONFIG=0
+WINGS_SERVICE=0
 WINGS_INSTALLED=0
 DOCKER_INSTALLED=0
+
 [[ -f /var/www/pterodactyl/artisan ]] && PANEL_INSTALLED=1
-[[ -x /usr/local/bin/wings ]] && WINGS_INSTALLED=1
+[[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
+[[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
+systemctl is-enabled wings >/dev/null 2>&1 && WINGS_SERVICE=1 || true
+systemctl is-active --quiet wings 2>/dev/null && WINGS_SERVICE=1 || true
+# Wings dianggap "terpasang penuh" hanya jika binary + config ada
+if [[ $WINGS_BINARY -eq 1 && $WINGS_CONFIG -eq 1 ]]; then
+    WINGS_INSTALLED=1
+fi
 command -v docker >/dev/null 2>&1 && DOCKER_INSTALLED=1
 
 PANEL_DOMAIN=""
@@ -218,28 +229,57 @@ if [[ -f "$RESULT_FILE" ]]; then
     done < <(grep -E '^(PANEL|NODE|EMAIL|USERNAME|PASSWORD|FIRSTNAME|LASTNAME|PLTA|PLTC)=' "$RESULT_FILE" 2>/dev/null || true)
 fi
 
+# kalau panel belum ada di disk, jangan pakai domain/akun dari file lama (bisa beda VPS/domain)
+if [[ $PANEL_INSTALLED -eq 0 ]]; then
+    PANEL_DOMAIN=""
+    NODE_DOMAIN=""
+    # password/email boleh tetap sebagai default hint, tapi domain wajib diisi ulang
+fi
+
 # deteksi domain dari sistem
 if [[ -z "$PANEL_DOMAIN" && -f /var/www/pterodactyl/.env ]]; then
     PANEL_DOMAIN="$(grep -E '^APP_URL=' /var/www/pterodactyl/.env 2>/dev/null | head -1 | cut -d= -f2- | sed 's|https\?://||;s|/.*||' | tr -d '"' | tr -d "'")"
 fi
-if [[ -z "$NODE_DOMAIN" ]]; then
-    if [[ -f /etc/pterodactyl/config.yml ]]; then
-        NODE_DOMAIN="$(grep -oP 'remote:.*https?://\K[^/]+' /etc/pterodactyl/config.yml 2>/dev/null | head -1 || true)"
-    fi
-    if [[ -z "$NODE_DOMAIN" ]]; then
-        NODE_DOMAIN="$(ls /etc/letsencrypt/live 2>/dev/null | grep -v '^README$' | grep -v "^${PANEL_DOMAIN}$" | head -1 || true)"
-    fi
+# Node domain: hanya dari config wings atau result file — JANGAN dari sisa cert LE acak
+if [[ -z "$NODE_DOMAIN" && -f /etc/pterodactyl/config.yml ]]; then
+    NODE_DOMAIN="$(grep -oP 'remote:.*https?://\K[^/]+' /etc/pterodactyl/config.yml 2>/dev/null | head -1 || true)"
+fi
+# Kalau panel belum ada, abaikan sisa domain dari install lama
+if [[ $PANEL_INSTALLED -eq 0 ]]; then
+    # jangan auto-isi node domain dari LE leftovers
+    :
 fi
 
 echo
 echo "----- STATUS SISTEM -----"
 echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
-echo "Wings  : $([ $WINGS_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
+if [[ $WINGS_INSTALLED -eq 1 ]]; then
+    echo "Wings  : SUDAH TERPASANG (binary+config)"
+elif [[ $WINGS_BINARY -eq 1 ]]; then
+    echo "Wings  : SISA BINARY (belum lengkap — akan di-setup ulang)"
+else
+    echo "Wings  : BELUM"
+fi
 echo "Docker : $([ $DOCKER_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
 if [[ -n "$PANEL_DOMAIN" ]]; then echo "Domain panel terdeteksi : $PANEL_DOMAIN"; fi
-if [[ -n "$NODE_DOMAIN" ]]; then echo "Domain node terdeteksi  : $NODE_DOMAIN"; fi
+if [[ -n "$NODE_DOMAIN" && $PANEL_INSTALLED -eq 1 ]]; then
+    echo "Domain node terdeteksi  : $NODE_DOMAIN"
+elif [[ -n "$NODE_DOMAIN" && $PANEL_INSTALLED -eq 0 ]]; then
+    echo "Domain node (sisa lama) : $NODE_DOMAIN  [diabaikan untuk install baru]"
+    NODE_DOMAIN=""
+fi
 echo "-------------------------"
 echo
+
+# bersihkan sisa wings orphan kalau panel sudah tidak ada
+if [[ $PANEL_INSTALLED -eq 0 && $WINGS_BINARY -eq 1 ]]; then
+    warn "Ketemu sisa wings dari install sebelumnya (panel sudah hilang)."
+    info "Binary wings akan dipakai ulang; config lama diabaikan."
+    # jangan hapus binary — tetap berguna; hapus config orphan biar step 12 nulis baru
+    rm -f /etc/pterodactyl/config.yml 2>/dev/null || true
+    WINGS_CONFIG=0
+    WINGS_INSTALLED=0
+fi
 
 ask() {
     local __var="$1" __prompt="$2" __def="${3:-}" __secret="${4:-0}" __val=""
@@ -552,7 +592,7 @@ ok "Panel terpasang dan service utama aktif."
 run_step "06" "[06] Install Wings"
 
 if [[ -x /usr/local/bin/wings ]]; then
-    warn "Wings binary sudah ada — skip install binary"
+    warn "Wings binary sudah ada — skip download binary"
 else
     export FQDN="$NODE_DOMAIN"
     export EMAIL="$ADMIN_EMAIL"
