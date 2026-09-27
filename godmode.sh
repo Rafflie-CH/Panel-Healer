@@ -591,45 +591,78 @@ ok "Panel terpasang dan service utama aktif."
 
 run_step "06" "[06] Install Wings"
 
-if [[ -x /usr/local/bin/wings ]]; then
-    warn "Wings binary sudah ada — skip download binary"
-else
-    export FQDN="$NODE_DOMAIN"
-    export EMAIL="$ADMIN_EMAIL"
-    export CONFIGURE_FIREWALL="true"
-    export CONFIGURE_LETSENCRYPT="false"
-    export CONFIGURE_DBHOST="false"
-
-    curl -fsSL "$WINGS_INSTALLER_URL" -o /tmp/wings-install.sh || error_exit 1 "Gagal download wings installer"
-    chmod +x /tmp/wings-install.sh
-    sed -i 's/^\s*read -r /true #patched /g' /tmp/wings-install.sh 2>/dev/null || true
-
-    # shellcheck source=/dev/null
-    source /tmp/lib.sh 2>/dev/null || true
-
-    info "Menjalankan installer Wings..."
+# pastikan docker dulu (jangan biarkan wings installer yang gagal total)
+if ! command -v docker >/dev/null 2>&1; then
+    info "Install Docker..."
     set +e
-    bash /tmp/wings-install.sh 2>&1
-    WINGS_RC=$?
+    curl -fsSL https://get.docker.com | sh
     set -e
-
-    if [[ $WINGS_RC -ne 0 || ! -x /usr/local/bin/wings ]]; then
-        # fallback download binary langsung
-        warn "Installer wings gagal, coba download binary..."
-        ARCH_W="amd64"
-        case "$(uname -m)" in aarch64|arm64) ARCH_W="arm64" ;; esac
-        curl -fsSL "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_${ARCH_W}" \
-            -o /usr/local/bin/wings || error_exit 1 "Gagal download wings binary"
-        chmod +x /usr/local/bin/wings
-    fi
 fi
 
-# SSL node domain
-ensure_ssl_cert "$NODE_DOMAIN"
+# coba hidupkan docker — jangan exit di sini kalau gagal, coba perbaikan ringan
+systemctl enable docker.socket 2>/dev/null || true
+systemctl start docker.socket 2>/dev/null || true
+systemctl enable docker 2>/dev/null || true
+set +e
+systemctl start docker 2>/dev/null
+set -e
 
-systemctl daemon-reload
-systemctl enable wings >/dev/null 2>&1 || true
-ok "Wings binary dan service terpasang."
+if ! docker info >/dev/null 2>&1; then
+    warn "Docker belum jalan — coba fallback iptables legacy..."
+    set +e
+    apt-get install -y -qq iptables 2>/dev/null
+    update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null
+    update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null
+    systemctl reset-failed docker 2>/dev/null
+    systemctl restart docker 2>/dev/null
+    sleep 2
+    set -e
+fi
+
+if docker info >/dev/null 2>&1; then
+    ok "Docker aktif."
+else
+    warn "Docker masih bermasalah — lanjut install wings binary dulu, start di step 13."
+fi
+
+if [[ -x /usr/local/bin/wings ]]; then
+    warn "Wings binary sudah ada — skip download"
+else
+    info "Download wings binary..."
+    ARCH_W="amd64"
+    case "$(uname -m)" in aarch64|arm64) ARCH_W="arm64" ;; esac
+    set +e
+    curl -fsSL "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_${ARCH_W}" \
+        -o /usr/local/bin/wings
+    WRC=$?
+    set -e
+    if [[ $WRC -ne 0 || ! -f /usr/local/bin/wings ]]; then
+        # fallback via community installer (non-interactive)
+        warn "Download langsung gagal — coba installer community..."
+        curl -fsSL "$WINGS_INSTALLER_URL" -o /tmp/wings-install.sh || error_exit 1 "Gagal download wings installer"
+        chmod +x /tmp/wings-install.sh
+        sed -i 's/^\s*read -r /true #patched /g' /tmp/wings-install.sh 2>/dev/null || true
+        export FQDN="$NODE_DOMAIN"
+        export EMAIL="$ADMIN_EMAIL"
+        export CONFIGURE_FIREWALL="false"
+        export CONFIGURE_LETSENCRYPT="false"
+        export CONFIGURE_DBHOST="false"
+        set +e
+        bash /tmp/wings-install.sh 2>&1
+        set -e
+    fi
+    chmod +x /usr/local/bin/wings 2>/dev/null || true
+fi
+
+[[ -x /usr/local/bin/wings ]] || error_exit 1 "Wings binary tidak tersedia di /usr/local/bin/wings"
+
+# SSL node (jangan gagalkan install)
+set +e
+ensure_ssl_cert "$NODE_DOMAIN"
+set -e
+
+# unit nanti di step 13
+ok "Wings binary siap."
 
 # =========================================================
 # 07 CREATE PLTA / PLTC
