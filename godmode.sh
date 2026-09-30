@@ -26,6 +26,100 @@ chmod 600 "$LOG_FILE"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+
+# ---------- convert panel config (JSON/YAML) -> proper YAML for wings ----------
+write_wings_config_yml() {
+    local src_file="$1"
+    local dest="$2"
+    local cert_pem key_pem
+    cert_pem="/etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem"
+    key_pem="/etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem"
+    if [[ ! -f "$cert_pem" || ! -f "$key_pem" ]]; then
+        cert_pem="/etc/ssl/${NODE_DOMAIN}.pem"
+        key_pem="/etc/ssl/${NODE_DOMAIN}.key"
+    fi
+    if [[ ! -f "$cert_pem" || ! -f "$key_pem" ]]; then
+        ensure_ssl_cert "$NODE_DOMAIN" || true
+        cert_pem="/etc/ssl/${NODE_DOMAIN}.pem"
+        key_pem="/etc/ssl/${NODE_DOMAIN}.key"
+    fi
+
+    # Jika JSON (panel API sering return JSON), konversi ke YAML
+    if jq -e . "$src_file" >/dev/null 2>&1; then
+        local tmp_json="$WORK_DIR/cfg_norm.json"
+        if jq -e '.attributes' "$src_file" >/dev/null 2>&1; then
+            jq '.attributes' "$src_file" > "$tmp_json"
+        else
+            cp "$src_file" "$tmp_json"
+        fi
+        # Pastikan ssl path + port internal 8080
+        jq --arg cert "$cert_pem" --arg key "$key_pem" '
+            .api.port = 8080 |
+            .api.host = (.api.host // "0.0.0.0") |
+            .api.ssl.enabled = true |
+            .api.ssl.cert = $cert |
+            .api.ssl.key = $key |
+            .api.upload_limit = (.api.upload_limit // 100) |
+            .system.data = (.system.data // "/var/lib/pterodactyl/volumes") |
+            .system.sftp.bind_port = (.system.sftp.bind_port // 2022) |
+            .allowed_mounts = (.allowed_mounts // []) |
+            .debug = (.debug // false)
+        ' "$tmp_json" > "$WORK_DIR/cfg_final.json"
+
+        # Tulis YAML manual (tanpa pyyaml dependency)
+        python3 - "$WORK_DIR/cfg_final.json" "$dest" <<'PYC'
+import json, sys
+d = json.load(open(sys.argv[1]))
+out = sys.argv[2]
+def q(s):
+    s = str(s)
+    if any(c in s for c in ":#{}[]&*!|>'\"%@`"):
+        return "'" + s.replace("'", "''") + "'"
+    return s
+lines = []
+lines.append(f"debug: {str(d.get('debug', False)).lower()}")
+lines.append(f"uuid: {d.get('uuid','')}")
+lines.append(f"token_id: {d.get('token_id','')}")
+lines.append(f"token: {d.get('token','')}")
+api = d.get('api') or {}
+ssl = api.get('ssl') or {}
+lines.append("api:")
+lines.append(f"  host: {api.get('host','0.0.0.0')}")
+lines.append(f"  port: {api.get('port', 8080)}")
+lines.append("  ssl:")
+lines.append(f"    enabled: {str(ssl.get('enabled', True)).lower()}")
+lines.append(f"    cert: {ssl.get('cert','')}")
+lines.append(f"    key: {ssl.get('key','')}")
+lines.append(f"  upload_limit: {api.get('upload_limit', 100)}")
+sys_ = d.get('system') or {}
+sftp = sys_.get('sftp') or {}
+lines.append("system:")
+lines.append(f"  data: {sys_.get('data','/var/lib/pterodactyl/volumes')}")
+lines.append("  sftp:")
+lines.append(f"    bind_port: {sftp.get('bind_port', 2022)}")
+lines.append("allowed_mounts: []")
+remote = d.get('remote', '')
+lines.append(f"remote: {q(remote)}")
+# trusted_proxies untuk reverse-proxy nginx
+lines.append("allowed_origins: []")
+open(out,'w').write("\n".join(lines)+"\n")
+print(f"YAML written: {out}")
+PYC
+    else
+        # Sudah YAML — copy + patch cert path + port
+        cp "$src_file" "$dest"
+        sed -i -E "s|^([[:space:]]*)port:[[:space:]]*[0-9]+|\\1port: 8080|" "$dest" || true
+        # patch cert paths if present
+        if [[ -f "$cert_pem" && -f "$key_pem" ]]; then
+            sed -i -E "s|^([[:space:]]*)cert:[[:space:]].*|\\1cert: ${cert_pem}|" "$dest" || true
+            sed -i -E "s|^([[:space:]]*)key:[[:space:]].*|\\1key: ${key_pem}|" "$dest" || true
+        fi
+    fi
+    chmod 600 "$dest"
+    chown root:root "$dest"
+}
+
+
 STEP="Inisialisasi"
 LAST_ERROR=""
 
@@ -1100,23 +1194,15 @@ fi
 set -e
 [[ $CFG_RC -eq 0 ]] || error_exit 1 "Gagal ambil config wings dari panel"
 
-if grep -qE '^[[:space:]]*(debug|uuid|token_id|token|api|system|remote):' "$CONFIG_RAW"; then
-    cp "$CONFIG_RAW" "$CONFIG_YML"
-elif jq -e . "$CONFIG_RAW" >/dev/null 2>&1; then
-    if jq -e '.attributes' "$CONFIG_RAW" >/dev/null 2>&1; then
-        jq -r '.attributes' "$CONFIG_RAW" > "$CONFIG_YML"
-    else
-        jq -r . "$CONFIG_RAW" > "$CONFIG_YML"
-    fi
-else
-    head -40 "$CONFIG_RAW"
-    error_exit 1 "Format config wings tidak valid"
+write_wings_config_yml "$CONFIG_RAW" "$CONFIG_YML"
+[[ -s "$CONFIG_YML" ]] || { head -40 "$CONFIG_RAW"; error_exit 1 "config.yml kosong / format invalid"; }
+# pastikan bukan JSON sisa
+if head -1 "$CONFIG_YML" | grep -q '^{'; then
+    error_exit 1 "config.yml masih JSON — konversi gagal"
 fi
-
-[[ -s "$CONFIG_YML" ]] || error_exit 1 "config.yml kosong"
-chmod 600 "$CONFIG_YML"
-chown root:root "$CONFIG_YML"
-ok "config.yml berhasil ditulis."
+ok "config.yml berhasil ditulis (YAML)."
+echo "--- preview ---"
+head -20 "$CONFIG_YML"
 
 # =========================================================
 # 12.5 SINKRONISASI TOKEN NODE (SELF-HEAL)
@@ -1288,76 +1374,70 @@ fi
 # ===== 13b =====
 run_step "13b" "[13b] Update node (listen=443) + refresh config Wings"
 
+CONFIG_YML="/etc/pterodactyl/config.yml"
+
 if [[ -f /etc/nginx/sites-enabled/pterodactyl-node.conf ]]; then
+    # Panel node: behind_proxy + listen 443 (public), wings internal tetap 8080
     NODE_UPDATE_BODY='{"daemon_listen":443,"behind_proxy":true}'
     set +e
-    NODE_UPD_RAW="$(api_patch "$API_BASE/nodes/$NODE_ID" "$NODE_UPDATE_BODY" 2>&1)"
-    NODE_UPD_RC=$?
+    NODE_UPDATE_RAW="$(api_patch "$API_BASE/nodes/$NODE_ID" "$NODE_UPDATE_BODY" 2>&1)"
+    NODE_UPDATE_RC=$?
     set -e
-    if [[ $NODE_UPD_RC -eq 0 ]]; then
+    if [[ $NODE_UPDATE_RC -eq 0 ]]; then
         ok "Node di-update via API: daemon_listen=443, behind_proxy=true."
     else
-        echo "API Node update gagal:"; api_error "$NODE_UPD_RAW"
-        warn "Lanjut dengan konfigurasi node yang ada."
+        warn "API patch node gagal (rc=$NODE_UPDATE_RC) — lanjut dengan config lokal."
+        echo "$NODE_UPDATE_RAW" | head -20 || true
     fi
 
+    # Refresh config dari panel (boleh JSON) lalu paksa YAML + cert path
     CONFIG_REFRESH="$WORK_DIR/node-config-refresh.raw"
     set +e
     curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
         -H "Authorization: Bearer $PLTA" \
-        -H "Accept: text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
+        -H "Accept: application/json, text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
         "$API_BASE/nodes/$NODE_ID/configuration" \
         -o "$CONFIG_REFRESH"
     REFRESH_RC=$?
-    if [[ $REFRESH_RC -eq 60 ]]; then
-        warn "SSL verify gagal refresh config — retry -k"
-        curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
-            -H "Authorization: Bearer $PLTA" \
-            -H "Accept: text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
-            "$API_BASE/nodes/$NODE_ID/configuration" \
-            -o "$CONFIG_REFRESH"
-        REFRESH_RC=$?
-    fi
     set -e
-    if [[ $REFRESH_RC -eq 0 ]] && grep -qE '^[[:space:]]*(debug|uuid|token_id|token|api|system|remote):' "$CONFIG_REFRESH"; then
-        cp "$CONFIG_REFRESH" "$CONFIG_YML"
-        sed -i -E "s/^([[:space:]]*)port:[[:space:]]*[0-9]+/\\1port: ${DAEMON_PORT}/" "$CONFIG_YML"
-        if grep -qE '^[[:space:]]*trusted_proxies:' "$CONFIG_YML"; then
-            sed -i -E 's|^([[:space:]]*)trusted_proxies:[[:space:]]*\[\][[:space:]]*$|\1trusted_proxies:\n\1- 127.0.0.1\n\1- ::1|' "$CONFIG_YML"
-        elif grep -qE '^[[:space:]]*upload_limit:' "$CONFIG_YML"; then
-            sed -i '/^[[:space:]]*upload_limit:/a\  trusted_proxies:\n  - 127.0.0.1\n  - ::1' "$CONFIG_YML"
-        else
-            warn "trusted_proxies tidak bisa di-inject (anchor tidak ditemukan)."
+    if [[ $REFRESH_RC -eq 0 && -s "$CONFIG_REFRESH" ]]; then
+        write_wings_config_yml "$CONFIG_REFRESH" "$CONFIG_YML"
+        # Inject trusted_proxies + allowed_origins (YAML only)
+        if ! grep -qE '^[[:space:]]*trusted_proxies:' "$CONFIG_YML"; then
+            printf 'trusted_proxies:\n- 127.0.0.1\n- ::1\n' >> "$CONFIG_YML"
         fi
-        if grep -qE '^[[:space:]]*allowed_origins:' "$CONFIG_YML"; then
-            sed -i -E "s|^([[:space:]]*)allowed_origins:[[:space:]]*\[\][[:space:]]*\$|\1allowed_origins:\n\1- https://${PANEL_DOMAIN}|" "$CONFIG_YML"
-        else
-            printf '\nallowed_origins:\n- https://%s\n' "$PANEL_DOMAIN" >> "$CONFIG_YML"
+        if ! grep -qE '^[[:space:]]*allowed_origins:' "$CONFIG_YML"; then
+            printf 'allowed_origins:\n- https://%s\n' "$PANEL_DOMAIN" >> "$CONFIG_YML"
+        elif grep -qE '^[[:space:]]*allowed_origins:[[:space:]]*\[\]' "$CONFIG_YML"; then
+            sed -i -E "s|^[[:space:]]*allowed_origins:[[:space:]]*\[\]|allowed_origins:\n- https://${PANEL_DOMAIN}|" "$CONFIG_YML" || true
         fi
-        chmod 600 "$CONFIG_YML"; chown root:root "$CONFIG_YML"
-        ok "config.yml di-regenerate (port=$DAEMON_PORT, trusted_proxies, allowed_origins)."
+        ok "config.yml di-regenerate (YAML, port=8080, cert path fix)."
+        head -25 "$CONFIG_YML"
     else
-        warn "Regenerate config.yml gagal — pakai config dari step 12."
+        warn "Refresh config dari panel gagal — pakai config step 12 + pastikan YAML."
+        if head -1 "$CONFIG_YML" 2>/dev/null | grep -q '^{'; then
+            write_wings_config_yml "$CONFIG_YML" "$CONFIG_YML"
+        fi
     fi
 
     systemctl restart wings 2>/dev/null || true
     sleep 3
-    systemctl is-active --quiet wings || {
-        journalctl -u wings -n 50 --no-pager || true
-        error_exit 1 "Wings gagal start setelah update konfigurasi"
-    }
-    ok "Wings restart dengan konfigurasi baru."
-else
-    NODE_RESET_BODY="$(jq -nc --argjson listen "$DAEMON_PORT" '{daemon_listen:$listen}')"
-    set +e
-    NODE_RESET_RAW="$(api_patch "$API_BASE/nodes/$NODE_ID" "$NODE_RESET_BODY" 2>&1)"
-    NODE_RESET_RC=$?
-    set -e
-    if [[ $NODE_RESET_RC -eq 0 ]]; then
-        ok "Vhost proxy tidak aktif — node di-reset ke :$DAEMON_PORT langsung."
+    if systemctl is-active --quiet wings; then
+        ok "Wings restart dengan konfigurasi baru."
     else
-        ok "Vhost proxy tidak aktif — node tetap :$DAEMON_PORT langsung."
+        warn "Wings belum active — cek journal:"
+        journalctl -u wings -n 40 --no-pager || true
+        # jangan hard-fail; user bisa start manual
+        systemctl start wings 2>/dev/null || true
+        sleep 2
+        systemctl is-active --quiet wings || warn "Wings masih down — lanjut validasi."
     fi
+else
+    NODE_RESET_BODY="$(jq -nc --argjson listen "$DAEMON_PORT" '{daemon_listen:$listen,behind_proxy:false}')"
+    set +e
+    api_patch "$API_BASE/nodes/$NODE_ID" "$NODE_RESET_BODY" >/dev/null 2>&1
+    set -e
+    ok "Vhost proxy tidak aktif — node listen :$DAEMON_PORT langsung."
 fi
 
 ok "GUZZLE timeout di-refresh."
