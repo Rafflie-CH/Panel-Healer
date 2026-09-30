@@ -5,11 +5,13 @@
 # =========================================================================
 # Basis: godmode.sh v2.2 (Rafflie-CH/Panel-Healer)
 # v3.0 — Perbaikan yang sudah diuji end-to-end di Ubuntu 22.04:
-#   1. NON-INTERAKTIF: semua input via env/flags (AMAN juga saat
-#      `curl ... | bash`, karena stdin tidak pernah dipakai untuk input).
+#   1. INPUT INTERAKTIF seperti installer lama (tinggal isi / Enter).
+#      Input dibaca dari /dev/tty, JADI AMAN juga untuk `curl ... | bash`
+#      (stdin/pipe script tidak pernah disentuh). File /root/godmode.env
+#      dan env var boleh dipakai sebagai nilai default (opsional).
 #   2. FIX "syntax error near unexpected token `fi`": one-liner
-#      `curl | bash` membuat `read` memakan isi script. Kini otomatis
-#      re-exec dengan `bash <(curl ...)` sehingga selalu aman.
+#      `curl | bash` dulu membuat `read` memakan isi script. Kini input
+#      via /dev/tty + installer resmi dijalankan dengan stdin /dev/null.
 #   3. FIX error handling: global ERR trap TIDAK pernah dimatikan lagi;
 #      semua capture error sengaja pakai pola `|| rc=$?` sehingga
 #      kegagalan yang diharapkan tidak membunuh installer (bug lama:
@@ -29,6 +31,13 @@
 # =========================================================================
 
 set -Eeuo pipefail
+
+# Robustness: composer & sub-installer butuh HOME (run via systemd/cron/su
+# tidak selalu mewarisi HOME, composer installer resmi menolak tanpa HOME).
+export HOME="${HOME:-/root}"
+export COMPOSER_HOME="${COMPOSER_HOME:-$HOME/.composer}"
+export COMPOSER_ALLOW_SUPERUSER=1
+mkdir -p "$COMPOSER_HOME"
 
 INSTALLER_BASE="https://raw.githubusercontent.com/pterodactyl-installer/pterodactyl-installer"
 INSTALLER_VERSION="v1.3.0"
@@ -68,54 +77,57 @@ error_exit() {
 trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
 
 # =========================================================================
-# 00 RE-EXEC: hanya untuk kasus `curl ... | bash` (fd0 = pipe berisi script,
-# $0 == "bash"). Kasus `bash <(curl ...)` / file tidak perlu re-exec.
+# 00 CATATAN AMAN stdin: script ini TIDAK PERNAH membaca stdin untuk input
+# (semua input via /dev/tty), sehingga `curl ... | bash` selalu aman.
+# Installer resmi juga dijalankan dengan stdin dari /dev/null (step 05).
 # =========================================================================
-STEP="00 Re-exec"
-if [[ ( "$0" == "bash" || "$0" == "sh" ) && ! -t 0 && "${GODMODE_REEXECED:-0}" != "1" ]]; then
-    info "Mode curl|bash terdeteksi — re-exec dengan stdin bebas agar script tidak terpotong..."
-    GODMODE_REEXECED=1 exec bash <(curl -fsSL "$SELF_URL") < /dev/null
-fi
 
 # =========================================================================
-# 00b INPUT NON-INTERAKTIF: env var > file /root/godmode.env > flag
+# 00b INPUT INTERAKTIF (kayak installer lama) — env/file .env jadi default
 # =========================================================================
-usage() {
-    cat <<USAGE
-Cara pakai (pilih salah satu):
-  1) File jawaban : /root/godmode.env berisi
-       PANEL_DOMAIN=console.rafzhost.my.id
-       NODE_DOMAIN=node-console.rafzhost.my.id
-       ADMIN_EMAIL=admin@gmail.com
-       ADMIN_USERNAME=admin
-       ADMIN_PASSWORD=admin001
-       ADMIN_FIRSTNAME=admin
-       ADMIN_LASTNAME=admin
-  2) Environment  : PANEL_DOMAIN=... NODE_DOMAIN=... ADMIN_EMAIL=... \\
-                    ADMIN_USERNAME=... ADMIN_PASSWORD=... bash godmode.sh
-  3) Interaktif   : jalankan tanpa keduanya (fallback)
-
-Catatan: force reinstall otomatis dipakai jika sisa install terdeteksi.
-USAGE
-}
-
-ask_env() { # ask_env VAR_NAME default
-    local __var="$1" __def="${2:-}" __val=""
-    __val="${!__var:-}"
-    if [[ -z "$__val" && -f /root/godmode.env ]]; then
-        __val="$(grep -E "^${__var}=" /root/godmode.env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\"' | tr -d "'")"
-    fi
-    if [[ -z "$__val" && -n "$__def" ]]; then
-        __val="$__def"
-    fi
-    if [[ -z "$__val" ]]; then
-        if [[ -t 0 ]]; then
-            printf "%s: " "$__var"
-            read -r __val < /dev/tty || true
+ask() { # ask VAR "Pertanyaan" "default" [secret]
+    local __var="$1" __prompt="$2" __def="${3:-}" __secret="${4:-0}" __val=""
+    if [[ -n "$__def" ]]; then
+        if [[ "$__secret" == "1" ]]; then
+            printf "%s [tersimpan]: " "$__prompt"
+        else
+            printf "%s [%s]: " "$__prompt" "$__def"
         fi
+    else
+        printf "%s: " "$__prompt"
     fi
+    if ! read -r __val 2>/dev/null < /dev/tty; then
+        __val=""
+    fi
+    [[ -z "$__val" ]] && __val="$__def"
     printf -v "$__var" '%s' "$__val"
 }
+
+PANEL_DOMAIN="${PANEL_DOMAIN:-}"
+NODE_DOMAIN="${NODE_DOMAIN:-}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+ADMIN_USERNAME="${ADMIN_USERNAME:-}"
+ADMIN_FIRSTNAME="${ADMIN_FIRSTNAME:-}"
+ADMIN_LASTNAME="${ADMIN_LASTNAME:-}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+
+# Opsional: pre-fill dari /root/godmode.env kalau ada (tidak wajib)
+load_env_defaults() {
+    [[ -f /root/godmode.env ]] || return 0
+    local k v
+    while IFS='=' read -r k v; do
+        case "$k" in
+            PANEL_DOMAIN) [[ -z "$PANEL_DOMAIN" ]] && PANEL_DOMAIN="${v//\"/}" ;;
+            NODE_DOMAIN)  [[ -z "$NODE_DOMAIN" ]] && NODE_DOMAIN="${v//\"/}" ;;
+            ADMIN_EMAIL)  [[ -z "$ADMIN_EMAIL" ]] && ADMIN_EMAIL="${v//\"/}" ;;
+            ADMIN_USERNAME) [[ -z "$ADMIN_USERNAME" ]] && ADMIN_USERNAME="${v//\"/}" ;;
+            ADMIN_FIRSTNAME) [[ -z "$ADMIN_FIRSTNAME" ]] && ADMIN_FIRSTNAME="${v//\"/}" ;;
+            ADMIN_LASTNAME) [[ -z "$ADMIN_LASTNAME" ]] && ADMIN_LASTNAME="${v//\"/}" ;;
+            ADMIN_PASSWORD) [[ -z "$ADMIN_PASSWORD" ]] && ADMIN_PASSWORD="${v//\"/}" ;;
+        esac
+    done < <(grep -E '^(PANEL_DOMAIN|NODE_DOMAIN|ADMIN_EMAIL|ADMIN_USERNAME|ADMIN_FIRSTNAME|ADMIN_LASTNAME|ADMIN_PASSWORD)=' /root/godmode.env 2>/dev/null || true)
+}
+load_env_defaults
 
 PANEL_DOMAIN="${PANEL_DOMAIN:-}"
 NODE_DOMAIN="${NODE_DOMAIN:-}"
@@ -126,25 +138,7 @@ ADMIN_LASTNAME="${ADMIN_LASTNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 
 # =========================================================================
-# 00c KUMPUL INPUT (dulu — sebelum ada aksi destruktif)
-# =========================================================================
-ask_env PANEL_DOMAIN ""
-ask_env NODE_DOMAIN ""
-ask_env ADMIN_EMAIL ""
-ask_env ADMIN_USERNAME "admin"
-ask_env ADMIN_FIRSTNAME "admin"
-ask_env ADMIN_LASTNAME "admin"
-ask_env ADMIN_PASSWORD ""
-
-if [[ -z "$PANEL_DOMAIN" || -z "$NODE_DOMAIN" || -z "$ADMIN_EMAIL" || -z "$ADMIN_USERNAME" || -z "$ADMIN_PASSWORD" ]]; then
-    echo
-    usage
-    error_exit 1 "Input belum lengkap (lihat cara pakai di atas). Tidak ada yang diubah."
-fi
-[[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
-
-# =========================================================================
-# 00d DETEKSI + HAPUS SISA INSTALL LAMA
+# 00c DETEKSI SISA INSTALL (untuk tampilkan status sebelum input)
 # =========================================================================
 PANEL_INSTALLED=0
 WINGS_BINARY=0
@@ -153,8 +147,44 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.0"
+banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.1"
+echo
+echo "----- STATUS SISTEM -----"
+echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
+if [[ $WINGS_CONFIG -eq 1 ]]; then
+    echo "Wings  : SUDAH TERPASANG"
+elif [[ $WINGS_BINARY -eq 1 ]]; then
+    echo "Wings  : SISA BINARY (akan di-setup ulang)"
+else
+    echo "Wings  : BELUM"
+fi
+command -v docker >/dev/null 2>&1 && echo "Docker : SUDAH TERPASANG" || echo "Docker : BELUM"
+echo "-------------------------"
+echo
 
+# =========================================================================
+# 00d KUMPUL INPUT INTERAKTIF (dulu — sebelum ada aksi destruktif)
+# =========================================================================
+info "Isi data di bawah (tekan Enter untuk pakai nilai dalam kurung)."
+echo
+ask PANEL_DOMAIN "Domain Panel" "$PANEL_DOMAIN"
+ask NODE_DOMAIN "Domain Node" "$NODE_DOMAIN"
+ask ADMIN_EMAIL "Email Admin" "${ADMIN_EMAIL:-}"
+ask ADMIN_USERNAME "Username Admin" "${ADMIN_USERNAME:-admin}"
+ask ADMIN_FIRSTNAME "Nama Depan" "${ADMIN_FIRSTNAME:-Admin}"
+ask ADMIN_LASTNAME "Nama Belakang" "${ADMIN_LASTNAME:-Rafz}"
+ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
+
+[[ -n "$PANEL_DOMAIN" ]]   || error_exit 1 "Domain Panel tidak boleh kosong."
+[[ -n "$NODE_DOMAIN" ]]    || error_exit 1 "Domain Node tidak boleh kosong."
+[[ -n "$ADMIN_EMAIL" ]]    || error_exit 1 "Email Admin tidak boleh kosong."
+[[ -n "$ADMIN_USERNAME" ]] || error_exit 1 "Username Admin tidak boleh kosong."
+[[ -n "$ADMIN_PASSWORD" ]] || error_exit 1 "Password Admin tidak boleh kosong."
+[[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
+
+# =========================================================================
+# 00e HAPUS SISA INSTALL LAMA (force reinstall)
+# =========================================================================
 if [[ $PANEL_INSTALLED -eq 1 || $WINGS_BINARY -eq 1 || $WINGS_CONFIG -eq 1 ]]; then
     warn "Terdeteksi sisa install lama — membersihkan (force reinstall)..."
     systemctl stop wings 2>/dev/null || true
@@ -186,10 +216,12 @@ DISK_OVERALLOCATE="0"
 UPLOAD_SIZE="100"
 EGG_NEST_NAME="bot"
 
-info "Mode      : INSTALL BARU (non-interaktif)"
+info "Mode      : INSTALL BARU"
 info "Panel     : $PANEL_DOMAIN"
-info "Node      : $NODE_DOMAIN"
+info "Node     : $NODE_DOMAIN"
 info "Admin     : $ADMIN_USERNAME <$ADMIN_EMAIL>"
+info "Location  : $LOCATION_SHORT"
+info "Ports     : $ALLOCATION_START-$ALLOCATION_END"
 info "Nest      : $EGG_NEST_NAME"
 echo
 
@@ -792,11 +824,28 @@ echo " Username : $ADMIN_USERNAME"
 echo " Password : $ADMIN_PASSWORD"
 echo "========================================="
 echo
-echo "  Node URL : https://$NODE_DOMAIN:$DAEMON_PORT (TLS native)"
-echo "  Location : $LOCATION_ID | Node ID: $NODE_ID | Egg ID: $EGG_ID"
-echo "  Alloc    : $ALLOC_IP:$ALLOCATION_START-$ALLOCATION_END ($ALLOC_ALIAS)"
-echo "  File data: $RESULT_FILE"
-echo "  Log      : $LOG_FILE"
+echo "========================================="
+echo "  API KEYS"
+echo "========================================="
+echo " PLTA     : $PLTA"
+echo " PLTC     : ${PLTC:-(gagal dibuat — buat manual di panel)}"
+echo "========================================="
+echo
+echo "========================================="
+echo "  NODE / IDS"
+echo "========================================="
+echo " Node URL : https://$NODE_DOMAIN:$DAEMON_PORT (TLS native)"
+echo " Location : $LOCATION_ID"
+echo " Node ID  : $NODE_ID"
+echo " Nest ID  : $NEST_ID"
+echo " Egg ID   : $EGG_ID"
+echo " Alloc    : $ALLOC_IP:$ALLOCATION_START-$ALLOCATION_END ($ALLOC_ALIAS)"
+echo " SFTP     : $NODE_DOMAIN:$SFTP_PORT"
+echo "========================================="
+echo
+echo " File data : $RESULT_FILE"
+echo " Log       : $LOG_FILE"
 echo
 ok "Panel + Wings + Location + Node + Allocation + Egg selesai."
+echo
 info "Login: https://$PANEL_DOMAIN  |  $ADMIN_USERNAME / $ADMIN_PASSWORD"
