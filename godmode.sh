@@ -181,6 +181,7 @@ export COMPOSER_ALLOW_SUPERUSER=1
 banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER"
 
 PANEL_INSTALLED=0
+FORCE_REINSTALL=0
 WINGS_BINARY=0
 WINGS_CONFIG=0
 WINGS_SERVICE=0
@@ -258,6 +259,38 @@ elif [[ -n "$NODE_DOMAIN" && $PANEL_INSTALLED -eq 0 ]]; then
 fi
 echo "-------------------------"
 echo
+
+# Panel/Wings "sudah ada" sering corrupt (SSL/LE/partial) — tawarkan force reinstall
+FORCE_REINSTALL=0
+if [[ $PANEL_INSTALLED -eq 1 || $WINGS_INSTALLED -eq 1 || $WINGS_BINARY -eq 1 ]]; then
+    warn "Ada sisa install sebelumnya (bisa corrupt)."
+    printf "Force reinstall dari nol? (y/N): "
+    read -r _fr
+    case "${_fr,,}" in
+        y|yes|ya)
+            FORCE_REINSTALL=1
+            warn "FORCE REINSTALL aktif — anggap belum terpasang."
+            PANEL_INSTALLED=0
+            WINGS_INSTALLED=0
+            WINGS_CONFIG=0
+            # jangan hapus binary wings (download mahal); config & panel path di-handle step 05/06
+            rm -f /etc/pterodactyl/config.yml 2>/dev/null || true
+            # bersihkan nginx node vhost lama
+            rm -f /etc/nginx/sites-enabled/pterodactyl-node.conf 2>/dev/null || true
+            rm -f /etc/nginx/sites-available/pterodactyl-node.conf 2>/dev/null || true
+            # optional: kosongkan domain dari result lama biar input ulang
+            PANEL_DOMAIN=""
+            NODE_DOMAIN=""
+            PLTA=""
+            PLTC=""
+            ok "Mode INSTALL BARU (force)."
+            ;;
+        *)
+            info "Lanjut RESUME / perbaiki yang ada."
+            ;;
+    esac
+    echo
+fi
 
 if [[ $PANEL_INSTALLED -eq 0 && $WINGS_BINARY -eq 1 ]]; then
     warn "Ketemu sisa wings dari install sebelumnya (panel sudah hilang)."
@@ -507,7 +540,17 @@ ok "Sisa /etc/hosts 127.0.0.1 (jika ada) dibersihkan."
 
 run_step "05" "[05] Install Pterodactyl Panel"
 
-if [[ -f /var/www/pterodactyl/artisan ]]; then
+if [[ "${FORCE_REINSTALL:-0}" -eq 1 && -f /var/www/pterodactyl/artisan ]]; then
+    warn "FORCE REINSTALL — bersihkan panel lama..."
+    systemctl stop pteroq 2>/dev/null || true
+    systemctl stop nginx 2>/dev/null || true
+    # jangan drop DB otomatis total biar aman; installer official handle recreate
+    # hapus app files supaya installer jalan penuh
+    rm -rf /var/www/pterodactyl
+    ok "Panel files dihapus, lanjut install fresh."
+fi
+
+if [[ -f /var/www/pterodactyl/artisan && "${FORCE_REINSTALL:-0}" -eq 0 ]]; then
     warn "Panel sudah terpasang — skip install, lanjut fix SSL + service"
 else
     DB_PASSWORD="$(openssl rand -hex 24)"
@@ -807,32 +850,12 @@ API_HEADERS=(
     -H "Content-Type: application/json"
 )
 
-# curl ke panel lokal sering exit 60 (self-signed / LE rate-limit cert)
-CURL_INSECURE=0
-_curl_api() {
-    # usage: _curl_api [extra curl args...] URL
-    local out rc
+# Panel lokal sering self-signed / LE broken → SELALU -k (insecure SSL)
+# supaya tidak exit 60 di step 08.
+api_get() {
+    local url="$1" out rc
     set +e
-    if [[ "$CURL_INSECURE" -eq 1 ]]; then
-        out="$(curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "$@" 2>&1)"
-    else
-        out="$(curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "$@" 2>&1)"
-        rc=$?
-        # 60 = SSL peer cert problem — retry sekali dengan -k
-        if [[ $rc -eq 60 ]]; then
-            warn "SSL verify gagal (exit 60) — retry dengan -k (self-signed/LE broken)"
-            CURL_INSECURE=1
-            out="$(curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "$@" 2>&1)"
-        else
-            set -e
-            if [[ $rc -ne 0 ]]; then
-                echo "$out" >&2
-                return $rc
-            fi
-            printf '%s' "$out"
-            return 0
-        fi
-    fi
+    out="$(curl -fsSk --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 90 "${API_HEADERS[@]}" "$url" 2>&1)"
     rc=$?
     set -e
     if [[ $rc -ne 0 ]]; then
@@ -842,15 +865,17 @@ _curl_api() {
     printf '%s' "$out"
 }
 
-api_get() {
-    local url="$1"
-    _curl_api "${API_HEADERS[@]}" "$url"
-}
-
 api_post() {
-    local url="$1"
-    local data="$2"
-    _curl_api "${API_HEADERS[@]}" -X POST -d "$data" "$url"
+    local url="$1" data="$2" out rc
+    set +e
+    out="$(curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 90 "${API_HEADERS[@]}" -X POST -d "$data" "$url" 2>&1)"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+        echo "$out" >&2
+        return $rc
+    fi
+    printf '%s' "$out"
 }
 
 api_error() {
@@ -859,9 +884,16 @@ api_error() {
 }
 
 api_patch() {
-    local url="$1"
-    local data="$2"
-    _curl_api "${API_HEADERS[@]}" -X PATCH -d "$data" "$url"
+    local url="$1" data="$2" out rc
+    set +e
+    out="$(curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 90 "${API_HEADERS[@]}" -X PATCH -d "$data" "$url" 2>&1)"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+        echo "$out" >&2
+        return $rc
+    fi
+    printf '%s' "$out"
 }
 
 set +e
@@ -1050,7 +1082,7 @@ CONFIG_YML="/etc/pterodactyl/config.yml"
 mkdir -p /etc/pterodactyl
 
 set +e
-curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
+curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
     -H "Authorization: Bearer $PLTA" \
     -H "Accept: text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
     "$API_BASE/nodes/$NODE_ID/configuration" \
@@ -1241,7 +1273,7 @@ if [[ -f /etc/nginx/sites-enabled/pterodactyl-node.conf ]]; then
 
     CONFIG_REFRESH="$WORK_DIR/node-config-refresh.raw"
     set +e
-    curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
+    curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
         -H "Authorization: Bearer $PLTA" \
         -H "Accept: text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
         "$API_BASE/nodes/$NODE_ID/configuration" \
