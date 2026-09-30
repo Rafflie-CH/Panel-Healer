@@ -388,7 +388,14 @@ ensure_ssl_cert() {
         warn "Certbot gagal (plugin/domain/rate limit) — pakai self-signed (SAN)"
     fi
     [[ -s "$cert_pem" && -s "$cert_key" ]] || error_exit 1 "Sertifikat untuk $domain tidak tersedia"
-    ok "SSL siap untuk $domain (self-signed)"
+    # FIX v3.3: wings (Go) & PHP-curl memvalidasi TLS panel ke system CA store.
+    # Self-signed HARUS dipasang ke trust store supaya wings bisa konek ke
+    # panel (kasus rate limit Let's Encrypt). Kalau nanti LE berhasil
+    # (script dijalankan ulang), symlink otomatis pindah ke cert LE.
+    cp -f "/etc/ssl/.selfsigned-${domain}.pem" "/usr/local/share/ca-certificates/rafz-${domain}.crt" 2>/dev/null || true
+    command -v update-ca-certificates >/dev/null 2>&1 && update-ca-certificates >/dev/null 2>&1 || true
+    warn "$domain memakai self-signed (browser akan tampil warning) — jalankan ulang script nanti untuk upgrade ke Let's Encrypt"
+    ok "SSL siap untuk $domain (self-signed + trusted)"
 }
 
 # =========================================================================
