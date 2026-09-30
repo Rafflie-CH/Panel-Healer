@@ -28,6 +28,13 @@
 #      Pterodactyl, dan importer tidak lagi mengandung kode mati.
 #   7. config.yml wings dipaksa native 8080 + TLS aktif + cert path,
 #      trusted_proxies & allowed_origins diinjeksi dengan benar.
+#   8. v3.2 FIX SSL (bug "Command gagal di step: 05b Cronjob"): certbot
+#      tanpa plugin nginx -> auto-install python3-certbot-nginx, fallback
+#      --standalone (port 80), lalu self-signed; SYMLINK cert rusak
+#      dibersihkan sebelum generate (bug openssl "failed to rename");
+#      label STEP SSL diperbaiki (sebelumnya salah tampil 05b Cronjob).
+#   9. v3.2 INPUT BARU: "Hostname VPS" -> hostname VPS bisa di-custom
+#      saat install (kosongkan/Enter untuk memakai hostname sekarang).
 # =========================================================================
 
 set -Eeuo pipefail
@@ -105,6 +112,7 @@ ask() { # ask VAR "Pertanyaan" "default" [secret]
 
 PANEL_DOMAIN="${PANEL_DOMAIN:-}"
 NODE_DOMAIN="${NODE_DOMAIN:-}"
+SERVER_HOSTNAME="${SERVER_HOSTNAME:-}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-}"
 ADMIN_FIRSTNAME="${ADMIN_FIRSTNAME:-}"
@@ -119,18 +127,20 @@ load_env_defaults() {
         case "$k" in
             PANEL_DOMAIN) [[ -z "$PANEL_DOMAIN" ]] && PANEL_DOMAIN="${v//\"/}" ;;
             NODE_DOMAIN)  [[ -z "$NODE_DOMAIN" ]] && NODE_DOMAIN="${v//\"/}" ;;
+            SERVER_HOSTNAME) [[ -z "$SERVER_HOSTNAME" ]] && SERVER_HOSTNAME="${v//\"/}" ;;
             ADMIN_EMAIL)  [[ -z "$ADMIN_EMAIL" ]] && ADMIN_EMAIL="${v//\"/}" ;;
             ADMIN_USERNAME) [[ -z "$ADMIN_USERNAME" ]] && ADMIN_USERNAME="${v//\"/}" ;;
             ADMIN_FIRSTNAME) [[ -z "$ADMIN_FIRSTNAME" ]] && ADMIN_FIRSTNAME="${v//\"/}" ;;
             ADMIN_LASTNAME) [[ -z "$ADMIN_LASTNAME" ]] && ADMIN_LASTNAME="${v//\"/}" ;;
             ADMIN_PASSWORD) [[ -z "$ADMIN_PASSWORD" ]] && ADMIN_PASSWORD="${v//\"/}" ;;
         esac
-    done < <(grep -E '^(PANEL_DOMAIN|NODE_DOMAIN|ADMIN_EMAIL|ADMIN_USERNAME|ADMIN_FIRSTNAME|ADMIN_LASTNAME|ADMIN_PASSWORD)=' /root/godmode.env 2>/dev/null || true)
+    done < <(grep -E '^(PANEL_DOMAIN|NODE_DOMAIN|SERVER_HOSTNAME|ADMIN_EMAIL|ADMIN_USERNAME|ADMIN_FIRSTNAME|ADMIN_LASTNAME|ADMIN_PASSWORD)=' /root/godmode.env 2>/dev/null || true)
 }
 load_env_defaults
 
 PANEL_DOMAIN="${PANEL_DOMAIN:-}"
 NODE_DOMAIN="${NODE_DOMAIN:-}"
+SERVER_HOSTNAME="${SERVER_HOSTNAME:-$(hostname 2>/dev/null || true)}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-}"
 ADMIN_FIRSTNAME="${ADMIN_FIRSTNAME:-admin}"
@@ -147,7 +157,7 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.1"
+banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.2"
 echo
 echo "----- STATUS SISTEM -----"
 echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
@@ -169,6 +179,7 @@ info "Isi data di bawah (tekan Enter untuk pakai nilai dalam kurung)."
 echo
 ask PANEL_DOMAIN "Domain Panel" "$PANEL_DOMAIN"
 ask NODE_DOMAIN "Domain Node" "$NODE_DOMAIN"
+ask SERVER_HOSTNAME "Hostname VPS (kosongkan = pakai sekarang)" "${SERVER_HOSTNAME:-}"
 ask ADMIN_EMAIL "Email Admin" "${ADMIN_EMAIL:-}"
 ask ADMIN_USERNAME "Username Admin" "${ADMIN_USERNAME:-admin}"
 ask ADMIN_FIRSTNAME "Nama Depan" "${ADMIN_FIRSTNAME:-Admin}"
@@ -177,6 +188,7 @@ ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
 
 [[ -n "$PANEL_DOMAIN" ]]   || error_exit 1 "Domain Panel tidak boleh kosong."
 [[ -n "$NODE_DOMAIN" ]]    || error_exit 1 "Domain Node tidak boleh kosong."
+[[ -n "$SERVER_HOSTNAME" ]] || error_exit 1 "Hostname VPS tidak boleh kosong."
 [[ -n "$ADMIN_EMAIL" ]]    || error_exit 1 "Email Admin tidak boleh kosong."
 [[ -n "$ADMIN_USERNAME" ]] || error_exit 1 "Username Admin tidak boleh kosong."
 [[ -n "$ADMIN_PASSWORD" ]] || error_exit 1 "Password Admin tidak boleh kosong."
@@ -201,6 +213,23 @@ if [[ $PANEL_INSTALLED -eq 1 || $WINGS_BINARY -eq 1 || $WINGS_CONFIG -eq 1 ]]; t
     mariadb -u root -e "DROP DATABASE IF EXISTS panel;" 2>/dev/null || true
     mariadb -u root -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1'; DROP USER IF EXISTS 'pterodactyl'@'localhost';" 2>/dev/null || true
     info "Sisa install lama dihapus (termasuk DB panel)."
+fi
+
+# =========================================================================
+# 00f HOSTNAME VPS (custom dari user; Enter = hostname sekarang)
+# =========================================================================
+STEP="00f Hostname"
+if [[ "$(hostname)" != "$SERVER_HOSTNAME" ]]; then
+    hostname "$SERVER_HOSTNAME" 2>/dev/null || true
+    if command -v hostnamectl >/dev/null 2>&1; then
+        hostnamectl set-hostname "$SERVER_HOSTNAME" 2>/dev/null || true
+    fi
+    if grep -qE '^[[:space:]]*127\.0\.1\.1[[:space:]]' /etc/hosts 2>/dev/null; then
+        sed -i -E "s|^([[:space:]]*127\.0\.1\.1[[:space:]]+).*|\1${SERVER_HOSTNAME}|" /etc/hosts 2>/dev/null || true
+    fi
+    ok "Hostname VPS di-set ke: $SERVER_HOSTNAME"
+else
+    ok "Hostname VPS sudah: $SERVER_HOSTNAME"
 fi
 
 LOCATION_SHORT="RafzHost"
@@ -304,40 +333,62 @@ ensure_ssl_cert() {
     local le_live="/etc/letsencrypt/live/${domain}"
     local cert_pem="/etc/ssl/${domain}.pem" cert_key="/etc/ssl/${domain}.key"
     mkdir -p /etc/ssl
-    if [[ -f "${le_live}/fullchain.pem" && -f "${le_live}/privkey.pem" ]]; then
+    # FIX v3.2: symlink cert lama (peninggalan uninstall) membuat openssl
+    # gagal menulis ("failed to rename") — bersihkan jalur lama dulu.
+    rm -f "$cert_pem" "$cert_key"
+    if [[ -s "${le_live}/fullchain.pem" && -s "${le_live}/privkey.pem" ]]; then
         info "Pakai cert Let's Encrypt yang sudah ada: $domain"
         ln -sfn "${le_live}/fullchain.pem" "$cert_pem"
         ln -sfn "${le_live}/privkey.pem" "$cert_key"
         return 0
     fi
+    # FIX v3.2b: bootstrap self-signed DENGAN SAN lebih dulu — vhost resmi
+    # menunjuk /etc/ssl/<domain>.pem, jadi file harus ada SEBELUM certbot
+    # jalan (kalau tidak, nginx config error dan certbot --nginx gagal),
+    # dan SAN wajib karena wings (Go) menolak cert CN-only.
+    if [[ ! -s "/etc/ssl/.selfsigned-${domain}.pem" ]]; then
+        info "Bootstrap self-signed SSL (dengan SAN) untuk $domain"
+        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+            -keyout "/etc/ssl/.selfsigned-${domain}.key" \
+            -out "/etc/ssl/.selfsigned-${domain}.pem" \
+            -subj "/CN=${domain}" \
+            -addext "subjectAltName=DNS:${domain}" >/dev/null 2>&1 \
+            || error_exit 1 "Gagal generate self-signed SSL untuk $domain"
+    fi
+    ln -sfn "/etc/ssl/.selfsigned-${domain}.pem" "$cert_pem"
+    ln -sfn "/etc/ssl/.selfsigned-${domain}.key" "$cert_key"
+    # FIX v3.2: certbot butuh plugin webserver. Bila plugin nginx belum ada,
+    # coba install; kalau tetap tidak ada pakai mode --standalone (port 80).
     if command -v certbot >/dev/null 2>&1; then
-        info "Coba certbot untuk $domain..."
-        local rc=0
-        certbot certonly --nginx --non-interactive --agree-tos --no-eff-email \
-            -m "${ADMIN_EMAIL}" -d "$domain" --keep-until-expiring --expand >/dev/null 2>&1 || rc=$?
-        if [[ $rc -ne 0 ]]; then
+        if ! certbot plugins 2>/dev/null | grep -qE '^\* nginx$'; then
+            info "Plugin certbot-nginx belum ada — mencoba install..."
+            apt-get update -o=Dpkg::Use-Pty=0 >/dev/null 2>&1 || true
+            DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-nginx >/dev/null 2>&1 || true
+        fi
+        if certbot plugins 2>/dev/null | grep -qE '^\* nginx$'; then
+            info "Coba certbot untuk $domain (--nginx)..."
+            certbot certonly --nginx --non-interactive --agree-tos \
+                --register-unsafely-without-email -d "$domain" \
+                --keep-until-expiring --expand >/dev/null 2>&1 || true
+        else
+            info "Coba certbot untuk $domain (--standalone, port 80)..."
+            systemctl stop nginx 2>/dev/null || true
+            certbot certonly --standalone --non-interactive --agree-tos \
+                --register-unsafely-without-email -d "$domain" \
+                --keep-until-expiring --expand >/dev/null 2>&1 || true
             systemctl start nginx 2>/dev/null || true
         fi
-        if [[ -f "${le_live}/fullchain.pem" ]]; then
-            ok "Certbot OK untuk $domain"
+        if [[ -s "${le_live}/fullchain.pem" ]]; then
+            ok "Certbot OK (Let's Encrypt) untuk $domain"
             ln -sfn "${le_live}/fullchain.pem" "$cert_pem"
             ln -sfn "${le_live}/privkey.pem" "$cert_key"
+            systemctl reload nginx 2>/dev/null || true
             return 0
         fi
-        warn "Certbot gagal / rate limit — fallback self-signed"
+        warn "Certbot gagal (plugin/domain/rate limit) — pakai self-signed (SAN)"
     fi
-    if [[ ! -f "$cert_pem" || ! -f "$cert_key" ]]; then
-        info "Generate self-signed SSL untuk $domain"
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout "$cert_key" -out "$cert_pem" -subj "/CN=${domain}" >/dev/null 2>&1
-    fi
-    # Pastikan vhost panel menunjuk ke cert yang benar-benar ada
-    # (template resmi memakai path /etc/letsencrypt yang belum tentu ada)
-    local vhost="/etc/nginx/sites-available/pterodactyl.conf"
-    if [[ -f "$vhost" ]]; then
-        sed -i "s|/etc/letsencrypt/live/${domain}/fullchain.pem|${cert_pem}|g; s|/etc/letsencrypt/live/${domain}/privkey.pem|${cert_key}|g" "$vhost" 2>/dev/null || true
-    fi
-    ok "SSL siap untuk $domain"
+    [[ -s "$cert_pem" && -s "$cert_key" ]] || error_exit 1 "Sertifikat untuk $domain tidak tersedia"
+    ok "SSL siap untuk $domain (self-signed)"
 }
 
 # =========================================================================
@@ -371,6 +422,7 @@ info "Setup cronjob schedule:run (anti-duplikat)..."
 ok "Cronjob terpasang (tepat 1 entri)."
 
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+STEP="05c SSL Panel"
 info "Setup SSL Panel..."
 ensure_ssl_cert "$PANEL_DOMAIN"
 if [[ -f /var/www/pterodactyl/.env ]]; then
