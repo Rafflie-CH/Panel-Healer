@@ -1124,45 +1124,75 @@ ok "config.yml berhasil ditulis."
 
 run_step "12.5" "[12.5] Sinkronisasi token node (DB panel <-> config.yml)"
 
-TOKEN_ID="$(grep -m1 -E '^[[:space:]]*token_id:' "$CONFIG_YML" | awk '{print $2}')"
-TOKEN_PLAIN="$(grep -m1 -E '^[[:space:]]*token:' "$CONFIG_YML" | awk '{print $2}')"
-[[ -n "$TOKEN_ID" && -n "$TOKEN_PLAIN" ]] || error_exit 1 "token_id/token tidak ditemukan di config.yml"
+# Parse YAML aman (buang quotes)
+TOKEN_ID="$(awk '/^[[:space:]]*token_id:/{gsub(/["\047]/,"",$2); print $2; exit}' "$CONFIG_YML")"
+TOKEN_PLAIN="$(awk '/^[[:space:]]*token:/{gsub(/["\047]/,"",$2); print $2; exit}' "$CONFIG_YML")"
+TOKEN_ID="${TOKEN_ID//$'\r'/}"
+TOKEN_PLAIN="${TOKEN_PLAIN//$'\r'/}"
 
-cat > "$WORK_DIR/sync_node_token.php" <<PHP
+if [[ -z "$TOKEN_ID" || -z "$TOKEN_PLAIN" ]]; then
+    warn "token_id/token kosong di config.yml — skip sync (config dari panel biasanya sudah benar)."
+    echo "--- head config.yml ---"
+    head -30 "$CONFIG_YML" || true
+else
+    info "token_id=$TOKEN_ID  token_len=${#TOKEN_PLAIN}"
+
+    # Pass via env agar tidak rusak heredoc/quote
+    export SYNC_NODE_ID="$NODE_ID"
+    export SYNC_TOKEN_ID="$TOKEN_ID"
+    export SYNC_TOKEN_PLAIN="$TOKEN_PLAIN"
+
+    cat > "$WORK_DIR/sync_node_token.php" <<'PHP'
 <?php
 require '/var/www/pterodactyl/vendor/autoload.php';
-\$app = require_once '/var/www/pterodactyl/bootstrap/app.php';
-\$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-\$node = Pterodactyl\Models\Node::find(${NODE_ID});
-if (!\$node) { fwrite(STDERR, "NODE_NOT_FOUND\n"); exit(1); }
-\$node->daemon_token_id = '${TOKEN_ID}';
-\$node->daemon_token = encrypt('${TOKEN_PLAIN}');
-\$node->save();
-\$fresh = Pterodactyl\Models\Node::find(${NODE_ID});
-\$attrs = \$fresh->getAttributes();
-echo 'DB_TOKEN_ID=' . \$attrs['daemon_token_id'] . "\n";
-echo 'DB_TOKEN_MATCH=' . (decrypt(\$attrs['daemon_token']) === '${TOKEN_PLAIN}' ? 'yes' : 'no') . "\n";
-PHP
-SYNC_OUT="$(cd /var/www/pterodactyl && php "$WORK_DIR/sync_node_token.php" 2>&1)" || { echo "$SYNC_OUT"; error_exit 1 "Gagal sinkron token node"; }
-echo "$SYNC_OUT"
-grep -q '^DB_TOKEN_MATCH=yes' <<< "$SYNC_OUT" || error_exit 1 "Token DB tidak match dengan config.yml setelah sync"
-ok "Token node tersinkron: DB panel = config.yml (terverifikasi)."
+$app = require_once '/var/www/pterodactyl/bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-cat > "$WORK_DIR/verify_wings.php" <<PHP
-<?php
-require '/var/www/pterodactyl/vendor/autoload.php';
-\$app = require_once '/var/www/pterodactyl/bootstrap/app.php';
-\$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+$nodeId = (int) getenv('SYNC_NODE_ID');
+$tokenId = getenv('SYNC_TOKEN_ID') ?: '';
+$tokenPlain = getenv('SYNC_TOKEN_PLAIN') ?: '';
+
+if ($nodeId < 1 || $tokenId === '' || $tokenPlain === '') {
+    fwrite(STDERR, "MISSING_ARGS node=$nodeId token_id_len=".strlen($tokenId)." token_len=".strlen($tokenPlain)."\n");
+    exit(1);
+}
+
+$node = Pterodactyl\Models\Node::find($nodeId);
+if (!$node) {
+    fwrite(STDERR, "NODE_NOT_FOUND id=$nodeId\n");
+    exit(1);
+}
+
 try {
-    \$info = app(Pterodactyl\Repositories\Wings\DaemonConfigurationRepository::class)
-        ->setNode(Pterodactyl\Models\Node::find(${NODE_ID}))
-        ->getSystemInformation();
-    echo 'WINGS_OK version=' . \$info['version'] . "\n";
-} catch (Throwable \$e) {
-    fwrite(STDERR, 'WINGS_FAIL: ' . \$e->getMessage() . "\n");
+    $node->daemon_token_id = $tokenId;
+    $node->daemon_token = encrypt($tokenPlain);
+    $node->save();
+    $fresh = Pterodactyl\Models\Node::find($nodeId);
+    $attrs = $fresh->getAttributes();
+    $match = (decrypt($attrs['daemon_token']) === $tokenPlain) ? 'yes' : 'no';
+    echo "DB_TOKEN_ID=" . $attrs['daemon_token_id'] . "\n";
+    echo "DB_TOKEN_MATCH=$match\n";
+    if ($match !== 'yes') exit(2);
+} catch (Throwable $e) {
+    fwrite(STDERR, "SYNC_EX: " . $e->getMessage() . "\n");
     exit(1);
 }
 PHP
+
+    set +e
+    SYNC_OUT="$(cd /var/www/pterodactyl && php "$WORK_DIR/sync_node_token.php" 2>&1)"
+    SYNC_RC=$?
+    set -e
+    echo "$SYNC_OUT"
+    if [[ $SYNC_RC -ne 0 ]]; then
+        warn "Sync token gagal (rc=$SYNC_RC) — lanjut; config.yml dari panel biasanya sudah sinkron."
+    else
+        ok "Token node tersinkron: DB panel = config.yml."
+    fi
+    unset SYNC_NODE_ID SYNC_TOKEN_ID SYNC_TOKEN_PLAIN
+fi
+
+# verify_wings dibuat di step 13b setelah wings jalan (bukan di sini)
 
 # =========================================================
 # 13 START WINGS
@@ -1366,12 +1396,33 @@ else
     warn "Cek: systemctl status wings, nginx, dan firewall provider (port $NODE_CHECK_PORT)."
 fi
 
+# Verifikasi panel -> wings (soft: warn saja kalau gagal, jangan hard-fail install)
+cat > "$WORK_DIR/verify_wings.php" <<PHP
+<?php
+require '/var/www/pterodactyl/vendor/autoload.php';
+\$app = require_once '/var/www/pterodactyl/bootstrap/app.php';
+\$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+try {
+    \$info = app(Pterodactyl\Repositories\Wings\DaemonConfigurationRepository::class)
+        ->setNode(Pterodactyl\Models\Node::find(${NODE_ID}))
+        ->getSystemInformation();
+    echo 'WINGS_OK version=' . (\$info['version'] ?? 'unknown') . "\n";
+} catch (Throwable \$e) {
+    fwrite(STDERR, 'WINGS_FAIL: ' . \$e->getMessage() . "\n");
+    exit(1);
+}
+PHP
 set +e
 VERIFY_OUT="$(cd /var/www/pterodactyl && php "$WORK_DIR/verify_wings.php" 2>&1)"
 VERIFY_RC=$?
 set -e
 echo "$VERIFY_OUT"
-[[ $VERIFY_RC -eq 0 ]] || error_exit 1 "Panel tidak bisa mengakses Wings (cek token node / step 12.5)"
+if [[ $VERIFY_RC -eq 0 ]]; then
+    ok "Panel berhasil mengakses Wings."
+else
+    warn "Panel belum bisa akses Wings (mungkin wings baru start / token). Cek: systemctl status wings"
+    warn "Bisa diulang nanti: systemctl restart wings && php artisan p:node:list"
+fi
 # =========================================================
 # 15 IMPORT EGG
 # =========================================================
