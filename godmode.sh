@@ -807,12 +807,33 @@ API_HEADERS=(
     -H "Content-Type: application/json"
 )
 
-api_get() {
-    local url="$1"
-    local out
+# curl ke panel lokal sering exit 60 (self-signed / LE rate-limit cert)
+CURL_INSECURE=0
+_curl_api() {
+    # usage: _curl_api [extra curl args...] URL
+    local out rc
     set +e
-    out="$(curl -fsS --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 60 "${API_HEADERS[@]}" "$url" 2>&1)"
-    local rc=$?
+    if [[ "$CURL_INSECURE" -eq 1 ]]; then
+        out="$(curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "$@" 2>&1)"
+    else
+        out="$(curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "$@" 2>&1)"
+        rc=$?
+        # 60 = SSL peer cert problem — retry sekali dengan -k
+        if [[ $rc -eq 60 ]]; then
+            warn "SSL verify gagal (exit 60) — retry dengan -k (self-signed/LE broken)"
+            CURL_INSECURE=1
+            out="$(curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "$@" 2>&1)"
+        else
+            set -e
+            if [[ $rc -ne 0 ]]; then
+                echo "$out" >&2
+                return $rc
+            fi
+            printf '%s' "$out"
+            return 0
+        fi
+    fi
+    rc=$?
     set -e
     if [[ $rc -ne 0 ]]; then
         echo "$out" >&2
@@ -821,19 +842,15 @@ api_get() {
     printf '%s' "$out"
 }
 
+api_get() {
+    local url="$1"
+    _curl_api "${API_HEADERS[@]}" "$url"
+}
+
 api_post() {
     local url="$1"
     local data="$2"
-    local out
-    set +e
-    out="$(curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "${API_HEADERS[@]}" -X POST -d "$data" "$url" 2>&1)"
-    local rc=$?
-    set -e
-    if [[ $rc -ne 0 ]]; then
-        echo "$out" >&2
-        return $rc
-    fi
-    printf '%s' "$out"
+    _curl_api "${API_HEADERS[@]}" -X POST -d "$data" "$url"
 }
 
 api_error() {
@@ -844,16 +861,7 @@ api_error() {
 api_patch() {
     local url="$1"
     local data="$2"
-    local out
-    set +e
-    out="$(curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 "${API_HEADERS[@]}" -X PATCH -d "$data" "$url" 2>&1)"
-    local rc=$?
-    set -e
-    if [[ $rc -ne 0 ]]; then
-        echo "$out" >&2
-        return $rc
-    fi
-    printf '%s' "$out"
+    _curl_api "${API_HEADERS[@]}" -X PATCH -d "$data" "$url"
 }
 
 set +e
@@ -1041,12 +1049,24 @@ CONFIG_RAW="$WORK_DIR/node-config.raw"
 CONFIG_YML="/etc/pterodactyl/config.yml"
 mkdir -p /etc/pterodactyl
 
-curl -fsS \
-    --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 60 \
+set +e
+curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
     -H "Authorization: Bearer $PLTA" \
     -H "Accept: text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
     "$API_BASE/nodes/$NODE_ID/configuration" \
-    -o "$CONFIG_RAW" || error_exit 1 "Gagal ambil config wings dari panel"
+    -o "$CONFIG_RAW"
+CFG_RC=$?
+if [[ $CFG_RC -eq 60 ]]; then
+    warn "SSL verify gagal ambil config — retry -k"
+    curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
+        -H "Authorization: Bearer $PLTA" \
+        -H "Accept: text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
+        "$API_BASE/nodes/$NODE_ID/configuration" \
+        -o "$CONFIG_RAW"
+    CFG_RC=$?
+fi
+set -e
+[[ $CFG_RC -eq 0 ]] || error_exit 1 "Gagal ambil config wings dari panel"
 
 if grep -qE '^[[:space:]]*(debug|uuid|token_id|token|api|system|remote):' "$CONFIG_RAW"; then
     cp "$CONFIG_RAW" "$CONFIG_YML"
@@ -1221,13 +1241,21 @@ if [[ -f /etc/nginx/sites-enabled/pterodactyl-node.conf ]]; then
 
     CONFIG_REFRESH="$WORK_DIR/node-config-refresh.raw"
     set +e
-    curl -fsS \
-        --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 60 \
+    curl -fsS --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
         -H "Authorization: Bearer $PLTA" \
         -H "Accept: text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
         "$API_BASE/nodes/$NODE_ID/configuration" \
         -o "$CONFIG_REFRESH"
     REFRESH_RC=$?
+    if [[ $REFRESH_RC -eq 60 ]]; then
+        warn "SSL verify gagal refresh config — retry -k"
+        curl -fsSk --retry 2 --retry-delay 2 --connect-timeout 15 --max-time 60 \
+            -H "Authorization: Bearer $PLTA" \
+            -H "Accept: text/yaml, text/plain, application/vnd.pterodactyl.v1+json" \
+            "$API_BASE/nodes/$NODE_ID/configuration" \
+            -o "$CONFIG_REFRESH"
+        REFRESH_RC=$?
+    fi
     set -e
     if [[ $REFRESH_RC -eq 0 ]] && grep -qE '^[[:space:]]*(debug|uuid|token_id|token|api|system|remote):' "$CONFIG_REFRESH"; then
         cp "$CONFIG_REFRESH" "$CONFIG_YML"
@@ -1319,7 +1347,7 @@ echo "$VERIFY_OUT"
 run_step "15" "[15] Import Egg — Nusantara Project GOD MODE"
 
 info "Menulis egg.json..."
-EGG_B64="eyJfY29tbWVudCI6ICJETyBOT1QgRURJVCIsICJtZXRhIjogeyJ2ZXJzaW9uIjogIlBURExfdjIiLCAidXBkYXRlX3VybCI6IG51bGx9LCAiZXhwb3J0ZWRfYXQiOiAiMjAyNi0wOC0yNFQwNjozNDowNiswNzowMCIsICJuYW1lIjogIk51c2FudGFyYSBQcm9qZWN0IC0gVUxUSU1BVEUgR09EIE1PREUgKFVuaWZpZWQpIiwgImF1dGhvciI6ICJyYWZ6aG9zdEByYWZ6aG9zdC5teS5pZCIsICJkZXNjcmlwdGlvbiI6ICJTYXR1IEVnZyB1bnR1ayBtZW5ndWFzYWkgc2VtdWFueWEuIiwgImZlYXR1cmVzIjogW10sICJkb2NrZXJfaW1hZ2VzIjogeyJOb2RlSlMgMTgiOiAiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6bm9kZWpzXzE4In0sICJmaWxlX2RlbnlsaXN0IjogW10sICJzdGFydHVwIjogImlmIFtbIC1kIC5naXQgXV0gJiYgW1sgXCJ7e0FVVE9fVVBEQVRFfX1cIiA9PSBcIjFcIiBdXTsgdGhlbiBnaXQgcHVsbDsgZmk7IGV2YWwge3tDTURfUlVOfX07IiwgImNvbmZpZyI6IHsiZmlsZXMiOiAie30iLCAic3RhcnR1cCI6ICJ7XHJcbiAgXCJkb25lXCI6IFwicnVubmluZ1wiXHJcbn0iLCAibG9ncyI6ICJ7fSIsICJzdG9wIjogIl5DIn0sICJzY3JpcHRzIjogeyJpbnN0YWxsYXRpb24iOiB7InNjcmlwdCI6ICIjIS9iaW4vYmFzaFxuZWNobyBpbnN0YWxsIGNvbXBsZXRlXG5leGl0IDAiLCAiY29udGFpbmVyIjogImRlYmlhbjpidWxsc2V5ZS1zbGltIiwgImVudHJ5cG9pbnQiOiAiYmFzaCJ9fSwgInZhcmlhYmxlcyI6IFt7Im5hbWUiOiAiRklMRSBVVEFNQSBTQ1JJUFQgKEVOVFJZIEZJTEUpIiwgImRlc2NyaXB0aW9uIjogIkNvbnRvaDogeWFybiBzdGFydCIsICJlbnZfdmFyaWFibGUiOiAiQ01EX1JVTiIsICJkZWZhdWx0X3ZhbHVlIjogInlhcm4gc3RhcnQiLCAidXNlcl92aWV3YWJsZSI6IHRydWUsICJ1c2VyX2VkaXRhYmxlIjogdHJ1ZSwgInJ1bGVzIjogInJlcXVpcmVkfHN0cmluZyIsICJmaWVsZF90eXBlIjogInRleHQifV19"
+EGG_B64="eyJfY29tbWVudCI6IkRPIE5PVCBFRElUIiwibWV0YSI6eyJ2ZXJzaW9uIjoiUFRETF92MiIsInVwZGF0ZV91cmwiOm51bGx9LCJleHBvcnRlZF9hdCI6IjIwMjYtMDgtMjRUMDY6MzQ6MDYrMDc6MDAiLCJuYW1lIjoiTnVzYW50YXJhIFByb2plY3QgLSBVTFRJTUFURSBHT0QgTU9ERSAoVW5pZmllZCkiLCJhdXRob3IiOiJyYWZ6aG9zdEByYWZ6aG9zdC5teS5pZCIsImRlc2NyaXB0aW9uIjoiU2F0dSBFZ2cgdW50dWsgbWVuZ3Vhc2FpIHNlbXVhbnlhLiBCaXNhIHN3aXRjaCBhbnRhcmEgWUFSTiAvIE5QTSBsYW5nc3VuZyBkYXJpIHBhbmVsLiIsImZlYXR1cmVzIjpbXSwiZG9ja2VyX2ltYWdlcyI6eyJOb2RlSlMgMjQiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjQiLCJOb2RlSlMgMjMiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjMiLCJOb2RlSlMgMjIiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjIiLCJOb2RlSlMgMjEiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjEiLCJOb2RlSlMgMjAiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjAiLCJOb2RlSlMgMTkiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTkiLCJOb2RlSlMgMTgiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTgiLCJOb2RlSlMgMTciOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTciLCJOb2RlSlMgMTYiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTYiLCJOb2RlSlMgMTUiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTUiLCJQeXRob24gMy4xMiI6ImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjEyIiwiUHl0aG9uIDMuMTEiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpweXRob25fMy4xMSIsIlB5dGhvbiAzLjEwIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6cHl0aG9uXzMuMTAiLCJQeXRob24gMy45IjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6cHl0aG9uXzMuOSIsIlB5dGhvbiAzLjgiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpweXRob25fMy44IiwiRGViaWFuIE9TIChVbml2ZXJzYWwpIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6ZGViaWFuIiwiVWJ1bnR1IE9TIChVbml2ZXJzYWwpIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6dWJ1bnR1In0sImZpbGVfZGVueWxpc3QiOltdLCJzdGFydHVwIjoiaWYgW1sgLWQgLmdpdCBdXSAmJiBbWyBcInt7QVVUT19VUERBVEV9fVwiID09IFwiMVwiIF1dOyB0aGVuIGdpdCBwdWxsOyBmaTsgaWYgW1sgISAteiAke0NMT1VERkxBUkVEX1RPS0VOfSBdXTsgdGhlbiBlY2hvIFwiTWVtdWxhaSBDbG91ZGZsYXJlZCBUdW5uZWwuLi5cIjsgd2dldCAtcSBodHRwczovL2dpdGh1Yi5jb20vY2xvdWRmbGFyZS9jbG91ZGZsYXJlZC9yZWxlYXNlcy9sYXRlc3QvZG93bmxvYWQvY2xvdWRmbGFyZWQtbGludXgtYW1kNjQgLU8gY2xvdWRmbGFyZWQgJiYgY2htb2QgK3ggY2xvdWRmbGFyZWQgJiYgLi9jbG91ZGZsYXJlZCB0dW5uZWwgLS1uby1hdXRvdXBkYXRlIHJ1biAtLXRva2VuICR7Q0xPVURGTEFSRURfVE9LRU59ID4gL2Rldi9udWxsIDI+JjEgJiBmaTsgcmVxX2ZpbGU9JHtSRVFVSVJFTUVOVFNfRklMRTotcmVxdWlyZW1lbnRzLnR4dH07IGlmIFsgLWYgL2hvbWUvY29udGFpbmVyLyRyZXFfZmlsZSBdOyB0aGVuIHBpcCBpbnN0YWxsIC1yICRyZXFfZmlsZTsgZmk7IGlmIFsgXCIke1BBQ0tBR0VfTUFOQUdFUn1cIiA9PSBcIm5wbVwiIF07IHRoZW4gaWYgW1sgISAteiAke05PREVfUEFDS0FHRVN9IF1dOyB0aGVuIHllcyBcIlwiIHwgbnBtIGluc3RhbGwgJHtOT0RFX1BBQ0tBR0VTfSAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGZpOyBpZiBbWyAhIC16ICR7VU5OT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgXCJcIiB8IG5wbSB1bmluc3RhbGwgJHtVTk5PREVfUEFDS0FHRVN9IC0tbm8tZnVuZCAtLW5vLWF1ZGl0OyBmaTsgaWYgWyAtZiAvaG9tZS9jb250YWluZXIvcGFja2FnZS5qc29uIF07IHRoZW4geWVzIFwiXCIgfCBucG0gaW5zdGFsbCAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGZpOyBybSAtcmYgLm5wbSAubG9nIC5jYWNoZSAtLWZvcmNlOyBlbHNlIGlmIFtbICEgLXogJHtOT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgfCB5YXJuIGFkZCAke05PREVfUEFDS0FHRVN9IC0tbm9uLWludGVyYWN0aXZlIC0taWdub3JlLWVuZ2luZXM7IGZpOyBpZiBbWyAhIC16ICR7VU5OT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgfCB5YXJuIHJlbW92ZSAke1VOTk9ERV9QQUNLQUdFU30gLS1ub24taW50ZXJhY3RpdmU7IGZpOyBpZiBbIC1mIC9ob21lL2NvbnRhaW5lci9wYWNrYWdlLmpzb24gXTsgdGhlbiB5ZXMgfCB5YXJuIGluc3RhbGwgLS1ub24taW50ZXJhY3RpdmUgLS1pZ25vcmUtZW5naW5lczsgZmk7IHJtIC1yZiAubnBtIC5sb2cgLmNhY2hlIC55YXJuLWNhY2hlIC0tZm9yY2U7IGZpOyBpZiBbWyAhIC16ICR7Q1VTVE9NX0VOVklST05NRU5UX1ZBUklBQkxFU30gXV07IHRoZW4gdmFycz0kKGVjaG8gJHtDVVNUT01fRU5WSVJPTk1FTlRfVkFSSUFCTEVTfSB8IHRyIFwiO1wiIFwiXFxuXCIpOyBmb3IgbGluZSBpbiAkdmFyczsgZG8gZXhwb3J0ICRsaW5lOyBkb25lIGZpOyBldmFsICR7Q01EX1JVTn07IiwiY29uZmlnIjp7ImZpbGVzIjoie30iLCJzdGFydHVwIjoie1xyXG4gIFwiZG9uZVwiOiBcInJ1bm5pbmdcIlxyXG59IiwibG9ncyI6Int9Iiwic3RvcCI6Il5DIn0sInNjcmlwdHMiOnsiaW5zdGFsbGF0aW9uIjp7InNjcmlwdCI6IiMhL2Jpbi9iYXNoXG5hcHQgdXBkYXRlXG5hcHQgaW5zdGFsbCAteSBnaXQgY3VybCB3Z2V0IGpxIGZpbGUgdW56aXAgbWFrZSBnY2MgZysrIHB5dGhvbjMgcHl0aG9uMy1kZXYgcHl0aG9uMy1waXAgbGlidG9vbFxuaWYgY29tbWFuZCAtdiBucG0gJj4vZGV2L251bGw7IHRoZW4gbnBtIGluc3RhbGwgLWcgeWFybjsgZmlcbm1rZGlyIC1wIC9tbnQvc2VydmVyXG5jZCAvbW50L3NlcnZlclxuaWYgWyBcIiR7VVNFUl9VUExPQUR9XCIgPT0gXCJ0cnVlXCIgXSB8fCBbIFwiJHtVU0VSX1VQTE9BRH1cIiA9PSBcIjFcIiBdOyB0aGVuIGVjaG8gZG9uZTsgZXhpdCAwOyBmaVxuaWYgW1sgJHtHSVRfQUREUkVTU30gIT0gKi5naXQgXV07IHRoZW4gR0lUX0FERFJFU1M9JHtHSVRfQUREUkVTU30uZ2l0OyBmaVxuaWYgWyAteiBcIiR7VVNFUk5BTUV9XCIgXSAmJiBbIC16IFwiJHtBQ0NFU1NfVE9LRU59XCIgXTsgdGhlbiBlY2hvIGFub247IGVsc2UgR0lUX0FERFJFU1M9XCJodHRwczovLyR7VVNFUk5BTUV9OiR7QUNDRVNTX1RPS0VOfUAkKGVjaG8gLWUgJHtHSVRfQUREUkVTU30gfCBjdXQgLWQvIC1mMy0pXCI7IGZpXG5pZiBbIFwiJChscyAtQSAvbW50L3NlcnZlcilcIiBdOyB0aGVuIGlmIFsgLWQgLmdpdCBdICYmIFsgLWYgLmdpdC9jb25maWcgXTsgdGhlbiBPUklHSU49JChnaXQgY29uZmlnIC0tZ2V0IHJlbW90ZS5vcmlnaW4udXJsKTsgaWYgWyBcIiR7T1JJR0lOfVwiID09IFwiJHtHSVRfQUREUkVTU31cIiBdOyB0aGVuIGdpdCBwdWxsOyBmaTsgZmk7IGVsc2UgaWYgWyAteiAke0JSQU5DSH0gXTsgdGhlbiBnaXQgY2xvbmUgJHtHSVRfQUREUkVTU30gLjsgZWxzZSBnaXQgY2xvbmUgLS1zaW5nbGUtYnJhbmNoIC0tYnJhbmNoICR7QlJBTkNIfSAke0dJVF9BRERSRVNTfSAuOyBmaTsgZmlcbmlmIFsgLWYgL21udC9zZXJ2ZXIvcGFja2FnZS5qc29uIF07IHRoZW4gaWYgWyBcIiR7UEFDS0FHRV9NQU5BR0VSfVwiID09IFwibnBtXCIgXTsgdGhlbiBybSAtcmYgbm9kZV9tb2R1bGVzIHBhY2thZ2UtbG9jay5qc29uOyB5ZXMgXCJcIiB8IG5wbSBpbnN0YWxsIC0tcHJvZHVjdGlvbiAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGVsc2Ugcm0gLWYgcGFja2FnZS1sb2NrLmpzb247IHllcyB8IHlhcm4gaW5zdGFsbCAtLXByb2R1Y3Rpb24gLS1ub24taW50ZXJhY3RpdmUgLS1pZ25vcmUtZW5naW5lczsgZmk7IGZpXG5yZXFfZmlsZT0ke1JFUVVJUkVNRU5UU19GSUxFOi1yZXF1aXJlbWVudHMudHh0fVxuaWYgWyAtZiAvbW50L3NlcnZlci8kcmVxX2ZpbGUgXTsgdGhlbiBwaXAgaW5zdGFsbCAtciAkcmVxX2ZpbGU7IGZpXG5lY2hvIGluc3RhbGwgY29tcGxldGVcbmV4aXQgMCIsImNvbnRhaW5lciI6ImRlYmlhbjpidWxsc2V5ZS1zbGltIiwiZW50cnlwb2ludCI6ImJhc2gifX0sInZhcmlhYmxlcyI6W3sibmFtZSI6IkdVTkFLQU4gRklMRSBVUExPQUQgTUFOVUFMPyIsImRlc2NyaXB0aW9uIjoiVXBsb2FkIG1hbnVhbCAoMSkgYXRhdSBnaXQgY2xvbmUgKDApLiBSZWluc3RhbGwgU2VydmVyIHVudHVrIGFwcGx5IGdpdC4iLCJlbnZfdmFyaWFibGUiOiJVU0VSX1VQTE9BRCIsImRlZmF1bHRfdmFsdWUiOiIxIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxib29sZWFuIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJQQUNLQUdFIE1BTkFHRVIgKFlBUk4gLyBOUE0pIiwiZGVzY3JpcHRpb24iOiJ5YXJuIGF0YXUgbnBtIiwiZW52X3ZhcmlhYmxlIjoiUEFDS0FHRV9NQU5BR0VSIiwiZGVmYXVsdF92YWx1ZSI6Inlhcm4iLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfHN0cmluZ3xpbjp5YXJuLG5wbSIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiRklMRSBVVEFNQSBTQ1JJUFQgKEVOVFJZIEZJTEUpIiwiZGVzY3JpcHRpb24iOiJDb250b2g6IHlhcm4gc3RhcnQsIG5wbSBzdGFydCwgcHl0aG9uIG1haW4ucHkiLCJlbnZfdmFyaWFibGUiOiJDTURfUlVOIiwiZGVmYXVsdF92YWx1ZSI6Inlhcm4gc3RhcnQiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6InJlcXVpcmVkfHN0cmluZyIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiRklMRSBMSUJSQVJZIC8gUkVRVUlSRU1FTlRTIiwiZGVzY3JpcHRpb24iOiJyZXF1aXJlbWVudHMudHh0IiwiZW52X3ZhcmlhYmxlIjoiUkVRVUlSRU1FTlRTX0ZJTEUiLCJkZWZhdWx0X3ZhbHVlIjoicmVxdWlyZW1lbnRzLnR4dCIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJMSU5LIFJFUE9TSVRPUkkgR0lUIChPUFNJT05BTCkiLCJkZXNjcmlwdGlvbiI6IlVSTCBnaXRodWIgcmVwby4gV2FqaWIgUmVpbnN0YWxsIFNlcnZlci4iLCJlbnZfdmFyaWFibGUiOiJHSVRfQUREUkVTUyIsImRlZmF1bHRfdmFsdWUiOiIiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfHN0cmluZyIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiSW5zdGFsbCBCcmFuY2giLCJkZXNjcmlwdGlvbiI6IkJyYW5jaCBnaXQiLCJlbnZfdmFyaWFibGUiOiJCUkFOQ0giLCJkZWZhdWx0X3ZhbHVlIjoiIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkF1dG8gVXBkYXRlIiwiZGVzY3JpcHRpb24iOiIxPXB1bGwgb24gc3RhcnQiLCJlbnZfdmFyaWFibGUiOiJBVVRPX1VQREFURSIsImRlZmF1bHRfdmFsdWUiOiIxIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxib29sZWFuIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJDbG91ZGZsYXJlZCBUb2tlbiIsImRlc2NyaXB0aW9uIjoiVG9rZW4gY2xvdWRmbGFyZSB0dW5uZWwiLCJlbnZfdmFyaWFibGUiOiJDTE9VREZMQVJFRF9UT0tFTiIsImRlZmF1bHRfdmFsdWUiOiIiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfHN0cmluZyIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiR2l0IFVzZXJuYW1lIiwiZGVzY3JpcHRpb24iOiJHaXQgdXNlciIsImVudl92YXJpYWJsZSI6IlVTRVJOQU1FIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJHaXQgQWNjZXNzIFRva2VuIiwiZGVzY3JpcHRpb24iOiJHaXQgdG9rZW4iLCJlbnZfdmFyaWFibGUiOiJBQ0NFU1NfVE9LRU4iLCJkZWZhdWx0X3ZhbHVlIjoiIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkV4dHJhIE5vZGUgUGFja2FnZXMiLCJkZXNjcmlwdGlvbiI6IlBha2V0IG5wbS95YXJuIGVrc3RyYSAoc3Bhc2kpIiwiZW52X3ZhcmlhYmxlIjoiTk9ERV9QQUNLQUdFUyIsImRlZmF1bHRfdmFsdWUiOiIiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfHN0cmluZyIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiVW5pbnN0YWxsIE5vZGUgUGFja2FnZXMiLCJkZXNjcmlwdGlvbiI6IlBha2V0IHlhbmcgZGktdW5pbnN0YWxsIiwiZW52X3ZhcmlhYmxlIjoiVU5OT0RFX1BBQ0tBR0VTIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJDdXN0b20gRW52IFZhcmlhYmxlcyIsImRlc2NyaXB0aW9uIjoiS0VZPXZhbDtLRVkyPXZhbDIiLCJlbnZfdmFyaWFibGUiOiJDVVNUT01fRU5WSVJPTk1FTlRfVkFSSUFCTEVTIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifV19"
 printf '%s' "$EGG_B64" | base64 -d > /tmp/egg.json
 
 python3 -c '
