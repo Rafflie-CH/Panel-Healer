@@ -3,44 +3,15 @@
 # RAFZHOST - GOD MODE INSTALLER (FIXED & TESTED)
 # Panel + Wings + Location + Node + Allocation + Egg
 # =========================================================================
-# Basis: godmode.sh v2.2 (Rafflie-CH/Panel-Healer)
-# v3.0 — Perbaikan yang sudah diuji end-to-end di Ubuntu 22.04:
-#   1. INPUT INTERAKTIF seperti installer lama (tinggal isi / Enter).
-#      Input dibaca dari /dev/tty, JADI AMAN juga untuk `curl ... | bash`
-#      (stdin/pipe script tidak pernah disentuh). File /root/godmode.env
-#      dan env var boleh dipakai sebagai nilai default (opsional).
-#   2. FIX "syntax error near unexpected token `fi`": one-liner
-#      `curl | bash` dulu membuat `read` memakan isi script. Kini input
-#      via /dev/tty + installer resmi dijalankan dengan stdin /dev/null.
-#   3. FIX error handling: global ERR trap TIDAK pernah dimatikan lagi;
-#      semua capture error sengaja pakai pola `|| rc=$?` sehingga
-#      kegagalan yang diharapkan tidak membunuh installer (bug lama:
-#      `trap - ERR` di dalam fungsi menghapus trap global permanen),
-#      dan PATCH node kini mengirim payload LENGKAP (PATCH parsial
-#      ditolak panel dengan 422).
-#   4. FIX desain port: node pakai mode NATIVE (wings TLS sendiri di
-#      :8080, behind_proxy=false). Mode lama (proxy nginx 443) bentrok
-#      port dengan wings di satu server dan membuat wings crash-loop.
-#   5. FIX cronjob: guard anti-duplikat (installer lama menumpuk
-#      entri setiap kali dijalankan ulang).
-#   6. FIX egg import: field `scripts` egg (base64) dirapikan jadi
-#      {installation:{script,entrypoint,container}} sesuai format
-#      Pterodactyl, dan importer tidak lagi mengandung kode mati.
-#   7. config.yml wings dipaksa native 8080 + TLS aktif + cert path,
-#      trusted_proxies & allowed_origins diinjeksi dengan benar.
-#   8. v3.2 FIX SSL (bug "Command gagal di step: 05b Cronjob"): certbot
-#      tanpa plugin nginx -> auto-install python3-certbot-nginx, fallback
-#      --standalone (port 80), lalu self-signed; SYMLINK cert rusak
-#      dibersihkan sebelum generate (bug openssl "failed to rename");
-#      label STEP SSL diperbaiki (sebelumnya salah tampil 05b Cronjob).
-#   9. v3.2 INPUT BARU: "Hostname VPS" -> hostname VPS bisa di-custom
-#      saat install (kosongkan/Enter untuk memakai hostname sekarang).
+# v3.3 — Perbaikan SSL panel (browser "Not Secure" walau cert valid):
+#   - AUTO-PATCH panel .env: TRUSTED_PROXIES=*, SESSION_SECURE_COOKIE=true
+#   - AUTO-PATCH nginx panel: fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;
+#   - Verifikasi HTTPS panel + WebSocket wss:// di step akhir.
+# (Semua perbaikan v3.0/v3.2 tetap dipertahankan.)
 # =========================================================================
 
 set -Eeuo pipefail
 
-# Robustness: composer & sub-installer butuh HOME (run via systemd/cron/su
-# tidak selalu mewarisi HOME, composer installer resmi menolak tanpa HOME).
 export HOME="${HOME:-/root}"
 export COMPOSER_HOME="${COMPOSER_HOME:-$HOME/.composer}"
 export COMPOSER_ALLOW_SUPERUSER=1
@@ -84,28 +55,15 @@ error_exit() {
 trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
 
 # =========================================================================
-# 00 CATATAN AMAN stdin: script ini TIDAK PERNAH membaca stdin untuk input
-# (semua input via /dev/tty), sehingga `curl ... | bash` selalu aman.
-# Installer resmi juga dijalankan dengan stdin dari /dev/null (step 05).
+# 00b INPUT INTERAKTIF
 # =========================================================================
-
-# =========================================================================
-# 00b INPUT INTERAKTIF (kayak installer lama) — env/file .env jadi default
-# =========================================================================
-ask() { # ask VAR "Pertanyaan" "default" [secret]
+ask() {
     local __var="$1" __prompt="$2" __def="${3:-}" __secret="${4:-0}" __val=""
     if [[ -n "$__def" ]]; then
-        if [[ "$__secret" == "1" ]]; then
-            printf "%s [tersimpan]: " "$__prompt"
-        else
-            printf "%s [%s]: " "$__prompt" "$__def"
-        fi
-    else
-        printf "%s: " "$__prompt"
-    fi
-    if ! read -r __val 2>/dev/null < /dev/tty; then
-        __val=""
-    fi
+        if [[ "$__secret" == "1" ]]; then printf "%s [tersimpan]: " "$__prompt"
+        else printf "%s [%s]: " "$__prompt" "$__def"; fi
+    else printf "%s: " "$__prompt"; fi
+    if ! read -r __val 2>/dev/null < /dev/tty; then __val=""; fi
     [[ -z "$__val" ]] && __val="$__def"
     printf -v "$__var" '%s' "$__val"
 }
@@ -119,7 +77,6 @@ ADMIN_FIRSTNAME="${ADMIN_FIRSTNAME:-}"
 ADMIN_LASTNAME="${ADMIN_LASTNAME:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 
-# Opsional: pre-fill dari /root/godmode.env kalau ada (tidak wajib)
 load_env_defaults() {
     [[ -f /root/godmode.env ]] || return 0
     local k v
@@ -138,17 +95,12 @@ load_env_defaults() {
 }
 load_env_defaults
 
-PANEL_DOMAIN="${PANEL_DOMAIN:-}"
-NODE_DOMAIN="${NODE_DOMAIN:-}"
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-$(hostname 2>/dev/null || true)}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-}"
-ADMIN_USERNAME="${ADMIN_USERNAME:-}"
 ADMIN_FIRSTNAME="${ADMIN_FIRSTNAME:-admin}"
 ADMIN_LASTNAME="${ADMIN_LASTNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 
 # =========================================================================
-# 00c DETEKSI SISA INSTALL (untuk tampilkan status sebelum input)
+# 00c DETEKSI SISA INSTALL
 # =========================================================================
 PANEL_INSTALLED=0
 WINGS_BINARY=0
@@ -157,23 +109,19 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.2"
+banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.3"
 echo
 echo "----- STATUS SISTEM -----"
 echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
-if [[ $WINGS_CONFIG -eq 1 ]]; then
-    echo "Wings  : SUDAH TERPASANG"
-elif [[ $WINGS_BINARY -eq 1 ]]; then
-    echo "Wings  : SISA BINARY (akan di-setup ulang)"
-else
-    echo "Wings  : BELUM"
-fi
+if [[ $WINGS_CONFIG -eq 1 ]]; then echo "Wings  : SUDAH TERPASANG"
+elif [[ $WINGS_BINARY -eq 1 ]]; then echo "Wings  : SISA BINARY (akan di-setup ulang)"
+else echo "Wings  : BELUM"; fi
 command -v docker >/dev/null 2>&1 && echo "Docker : SUDAH TERPASANG" || echo "Docker : BELUM"
 echo "-------------------------"
 echo
 
 # =========================================================================
-# 00d KUMPUL INPUT INTERAKTIF (dulu — sebelum ada aksi destruktif)
+# 00d KUMPUL INPUT
 # =========================================================================
 info "Isi data di bawah (tekan Enter untuk pakai nilai dalam kurung)."
 echo
@@ -195,7 +143,7 @@ ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
 [[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
 
 # =========================================================================
-# 00e HAPUS SISA INSTALL LAMA (force reinstall)
+# 00e HAPUS SISA INSTALL LAMA
 # =========================================================================
 if [[ $PANEL_INSTALLED -eq 1 || $WINGS_BINARY -eq 1 || $WINGS_CONFIG -eq 1 ]]; then
     warn "Terdeteksi sisa install lama — membersihkan (force reinstall)..."
@@ -208,22 +156,18 @@ if [[ $PANEL_INSTALLED -eq 1 || $WINGS_BINARY -eq 1 || $WINGS_CONFIG -eq 1 ]]; t
     rm -rf /var/www/pterodactyl /etc/pterodactyl
     rm -f /usr/local/bin/wings
     rm -f "$RESULT_FILE"
-    # DB panel di-drop supaya installer resmi bisa install fresh
-    # (CREATE DATABASE / CREATE USER resmi tidak idempotent)
     mariadb -u root -e "DROP DATABASE IF EXISTS panel;" 2>/dev/null || true
     mariadb -u root -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1'; DROP USER IF EXISTS 'pterodactyl'@'localhost';" 2>/dev/null || true
     info "Sisa install lama dihapus (termasuk DB panel)."
 fi
 
 # =========================================================================
-# 00f HOSTNAME VPS (custom dari user; Enter = hostname sekarang)
+# 00f HOSTNAME VPS
 # =========================================================================
 STEP="00f Hostname"
 if [[ "$(hostname)" != "$SERVER_HOSTNAME" ]]; then
     hostname "$SERVER_HOSTNAME" 2>/dev/null || true
-    if command -v hostnamectl >/dev/null 2>&1; then
-        hostnamectl set-hostname "$SERVER_HOSTNAME" 2>/dev/null || true
-    fi
+    command -v hostnamectl >/dev/null 2>&1 && hostnamectl set-hostname "$SERVER_HOSTNAME" 2>/dev/null || true
     if grep -qE '^[[:space:]]*127\.0\.1\.1[[:space:]]' /etc/hosts 2>/dev/null; then
         sed -i -E "s|^([[:space:]]*127\.0\.1\.1[[:space:]]+).*|\1${SERVER_HOSTNAME}|" /etc/hosts 2>/dev/null || true
     fi
@@ -247,11 +191,9 @@ EGG_NEST_NAME="bot"
 
 info "Mode      : INSTALL BARU"
 info "Panel     : $PANEL_DOMAIN"
-info "Node     : $NODE_DOMAIN"
+info "Node      : $NODE_DOMAIN"
 info "Admin     : $ADMIN_USERNAME <$ADMIN_EMAIL>"
-info "Location  : $LOCATION_SHORT"
 info "Ports     : $ALLOCATION_START-$ALLOCATION_END"
-info "Nest      : $EGG_NEST_NAME"
 echo
 
 # =========================================================================
@@ -261,16 +203,12 @@ STEP="01 Sistem"
 banner "[01] Pengecekan sistem"
 . /etc/os-release
 ARCH="$(uname -m)"
-case "$ARCH" in
-    x86_64|amd64|aarch64|arm64) ;;
-    *) error_exit 1 "Architecture tidak didukung: $ARCH" ;;
-esac
+case "$ARCH" in x86_64|amd64|aarch64|arm64) ;; *) error_exit 1 "Architecture tidak didukung: $ARCH" ;; esac
 case "$ID:$VERSION_ID" in
     ubuntu:22.04|ubuntu:24.04|debian:11|debian:12|debian:13) ;;
     *) error_exit 1 "OS tidak didukung: $PRETTY_NAME" ;;
 esac
-echo "OS          : $ID $VERSION_ID"
-echo "Architecture: $ARCH"
+echo "OS: $ID $VERSION_ID | Arch: $ARCH"
 ok "OS dan architecture terdeteksi."
 
 # =========================================================================
@@ -322,8 +260,6 @@ echo "Panel DNS: ${PANEL_DNS:-TIDAK ADA} | Node DNS: ${NODE_DNS:-TIDAK ADA} | VP
 ok "DNS publik sesuai IP VPS."
 sed -i "/[[:space:]]$PANEL_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
 sed -i "/[[:space:]]$NODE_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
-sed -i "/[[:space:]]$PANEL_DOMAIN[[:space:]]/d; /[[:space:]]$NODE_DOMAIN[[:space:]]/d" \
-    /etc/cloud/templates/hosts.debian.tmpl 2>/dev/null || true
 
 # =========================================================================
 # SSL helpers
@@ -333,8 +269,6 @@ ensure_ssl_cert() {
     local le_live="/etc/letsencrypt/live/${domain}"
     local cert_pem="/etc/ssl/${domain}.pem" cert_key="/etc/ssl/${domain}.key"
     mkdir -p /etc/ssl
-    # FIX v3.2: symlink cert lama (peninggalan uninstall) membuat openssl
-    # gagal menulis ("failed to rename") — bersihkan jalur lama dulu.
     rm -f "$cert_pem" "$cert_key"
     if [[ -s "${le_live}/fullchain.pem" && -s "${le_live}/privkey.pem" ]]; then
         info "Pakai cert Let's Encrypt yang sudah ada: $domain"
@@ -342,10 +276,6 @@ ensure_ssl_cert() {
         ln -sfn "${le_live}/privkey.pem" "$cert_key"
         return 0
     fi
-    # FIX v3.2b: bootstrap self-signed DENGAN SAN lebih dulu — vhost resmi
-    # menunjuk /etc/ssl/<domain>.pem, jadi file harus ada SEBELUM certbot
-    # jalan (kalau tidak, nginx config error dan certbot --nginx gagal),
-    # dan SAN wajib karena wings (Go) menolak cert CN-only.
     if [[ ! -s "/etc/ssl/.selfsigned-${domain}.pem" ]]; then
         info "Bootstrap self-signed SSL (dengan SAN) untuk $domain"
         openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
@@ -357,8 +287,6 @@ ensure_ssl_cert() {
     fi
     ln -sfn "/etc/ssl/.selfsigned-${domain}.pem" "$cert_pem"
     ln -sfn "/etc/ssl/.selfsigned-${domain}.key" "$cert_key"
-    # FIX v3.2: certbot butuh plugin webserver. Bila plugin nginx belum ada,
-    # coba install; kalau tetap tidak ada pakai mode --standalone (port 80).
     if command -v certbot >/dev/null 2>&1; then
         if ! certbot plugins 2>/dev/null | grep -qE '^\* nginx$'; then
             info "Plugin certbot-nginx belum ada — mencoba install..."
@@ -385,21 +313,17 @@ ensure_ssl_cert() {
             systemctl reload nginx 2>/dev/null || true
             return 0
         fi
-        warn "Certbot gagal (plugin/domain/rate limit) — pakai self-signed (SAN)"
+        warn "Certbot gagal — pakai self-signed (SAN)"
     fi
     [[ -s "$cert_pem" && -s "$cert_key" ]] || error_exit 1 "Sertifikat untuk $domain tidak tersedia"
-    # FIX v3.3: wings (Go) & PHP-curl memvalidasi TLS panel ke system CA store.
-    # Self-signed HARUS dipasang ke trust store supaya wings bisa konek ke
-    # panel (kasus rate limit Let's Encrypt). Kalau nanti LE berhasil
-    # (script dijalankan ulang), symlink otomatis pindah ke cert LE.
     cp -f "/etc/ssl/.selfsigned-${domain}.pem" "/usr/local/share/ca-certificates/rafz-${domain}.crt" 2>/dev/null || true
     command -v update-ca-certificates >/dev/null 2>&1 && update-ca-certificates >/dev/null 2>&1 || true
-    warn "$domain memakai self-signed (browser akan tampil warning) — jalankan ulang script nanti untuk upgrade ke Let's Encrypt"
+    warn "$domain memakai self-signed — jalankan ulang script nanti untuk upgrade ke Let's Encrypt"
     ok "SSL siap untuk $domain (self-signed + trusted)"
 }
 
 # =========================================================================
-# 05 PANEL (installer resmi, di-patch non-interaktif + cronjob dedup)
+# 05 PANEL
 # =========================================================================
 STEP="05 Panel"
 banner "[05] Install Pterodactyl Panel"
@@ -414,13 +338,11 @@ info "Mengambil installer resmi $INSTALLER_VERSION..."
 curl -fsSL "$LIB_URL" -o /tmp/lib.sh || error_exit 1 "Gagal download lib.sh"
 curl -fsSL "$PANEL_INSTALLER_URL" -o /tmp/panel-install.sh || error_exit 1 "Gagal download panel installer"
 chmod +x /tmp/panel-install.sh
-# Prompt "Still assume SSL?" pada letsencrypt() tidak pernah tertuju karena
-# CONFIGURE_LETSENCRYPT=false — tidak perlu patch read untuk panel.
 
 info "Menjalankan installer Panel..."
 bash /tmp/panel-install.sh || error_exit 1 "Panel installer gagal"
 
-# --- FIX CRONJOB (installer v1.3.0 menumpuk entri tiap kali jalan) ---
+# --- FIX CRONJOB (anti-duplikat) ---
 STEP="05b Cronjob"
 info "Setup cronjob schedule:run (anti-duplikat)..."
 ( crontab -l 2>/dev/null | grep -vF 'pterodactyl/artisan schedule:run' || true; \
@@ -429,12 +351,62 @@ info "Setup cronjob schedule:run (anti-duplikat)..."
 ok "Cronjob terpasang (tepat 1 entri)."
 
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+
+# =========================================================================
+# 05c SSL PANEL + PATCH HTTPS (FIX v3.3)
+# =========================================================================
 STEP="05c SSL Panel"
 info "Setup SSL Panel..."
 ensure_ssl_cert "$PANEL_DOMAIN"
-if [[ -f /var/www/pterodactyl/.env ]]; then
-    sed -i "s|^APP_URL=.*|APP_URL=https://${PANEL_DOMAIN}|g" /var/www/pterodactyl/.env
+
+# --- FIX v3.3: PATCH PANEL .env untuk reverse proxy HTTPS ---
+STEP="05c2 Patch Panel HTTPS"
+info "Patch panel .env (APP_URL / TRUSTED_PROXIES / SESSION_SECURE_COOKIE)..."
+PANEL_ENV="/var/www/pterodactyl/.env"
+if [[ -f "$PANEL_ENV" ]]; then
+    # APP_URL → https
+    if grep -q '^APP_URL=' "$PANEL_ENV"; then
+        sed -i "s|^APP_URL=.*|APP_URL=https://${PANEL_DOMAIN}|" "$PANEL_ENV"
+    else
+        echo "APP_URL=https://${PANEL_DOMAIN}" >> "$PANEL_ENV"
+    fi
+    # TRUSTED_PROXIES → percaya X-Forwarded-* dari nginx
+    if grep -q '^TRUSTED_PROXIES=' "$PANEL_ENV"; then
+        sed -i 's|^TRUSTED_PROXIES=.*|TRUSTED_PROXIES=*|' "$PANEL_ENV"
+    else
+        echo 'TRUSTED_PROXIES=*' >> "$PANEL_ENV"
+    fi
+    # SESSION_SECURE_COOKIE → cookie hanya via HTTPS
+    if grep -q '^SESSION_SECURE_COOKIE=' "$PANEL_ENV"; then
+        sed -i 's|^SESSION_SECURE_COOKIE=.*|SESSION_SECURE_COOKIE=true|' "$PANEL_ENV"
+    else
+        echo 'SESSION_SECURE_COOKIE=true' >> "$PANEL_ENV"
+    fi
+    ok "Panel .env dipatch (APP_URL, TRUSTED_PROXIES, SESSION_SECURE_COOKIE)."
+else
+    warn "Panel .env tidak ditemukan — lewati patch .env."
 fi
+
+# --- FIX v3.3: PATCH NGINX PANEL untuk fastcgi X-Forwarded-Proto ---
+PANEL_NGINX_CONF="/etc/nginx/sites-available/pterodactyl.conf"
+if [[ -f "$PANEL_NGINX_CONF" ]]; then
+    if ! grep -q "HTTP_X_FORWARDED_PROTO" "$PANEL_NGINX_CONF"; then
+        info "Patch nginx panel: tambah HTTP_X_FORWARDED_PROTO..."
+        if grep -q "fastcgi_param SCRIPT_FILENAME" "$PANEL_NGINX_CONF"; then
+            sed -i '/fastcgi_param SCRIPT_FILENAME/a\        fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;' "$PANEL_NGINX_CONF"
+        elif grep -q "include fastcgi_params;" "$PANEL_NGINX_CONF"; then
+            sed -i '/include fastcgi_params;/a\        fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;' "$PANEL_NGINX_CONF"
+        else
+            warn "Tidak menemukan anchor fastcgi — patch manual mungkin diperlukan."
+        fi
+        grep -q "HTTP_X_FORWARDED_PROTO" "$PANEL_NGINX_CONF" && ok "nginx panel dipatch (X-Forwarded-Proto)." || warn "Patch nginx panel mungkin gagal."
+    else
+        ok "nginx panel sudah punya HTTP_X_FORWARDED_PROTO."
+    fi
+else
+    warn "nginx config panel tidak ditemukan — lewati patch nginx."
+fi
+
 cd /var/www/pterodactyl
 php artisan optimize:clear >/dev/null 2>&1 || true
 chown -R www-data:www-data /var/www/pterodactyl
@@ -448,7 +420,7 @@ systemctl is-active --quiet mariadb || error_exit 1 "MariaDB tidak aktif"
 ok "Panel terpasang dan service utama aktif."
 
 # =========================================================================
-# 06 WINGS (binary + docker)
+# 06 WINGS
 # =========================================================================
 STEP="06 Wings binary"
 banner "[06] Install Wings"
@@ -484,7 +456,7 @@ chmod +x /usr/local/bin/wings
 ok "Wings binary siap."
 
 # =========================================================================
-# 07 PLTA / PLTC
+# 07 API KEYS
 # =========================================================================
 STEP="07 API Keys"
 banner "[07] Membuat PLTA / PLTC"
@@ -517,14 +489,14 @@ PLTC="$(printf '%s\n' "$KEY_OUTPUT" | sed -n 's/^PLTC=//p' | head -1)"
 ok "PLTA berhasil dibuat."
 
 # =========================================================================
-# 08-11 API: location, node, allocation
+# 08-11 API
 # =========================================================================
 STEP="08 Application API"
 banner "[08] Menyiapkan Application API"
 API_BASE="https://$PANEL_DOMAIN/api/application"
 API_HEADERS=(-H "Authorization: Bearer $PLTA" -H "Accept: Application/vnd.pterodactyl.v1+json" -H "Content-Type: application/json")
 
-api_req() { # api_req METHOD URL DATA
+api_req() {
     local method="$1" url="$2" data="${3:-}" out rc=0
     if [[ -n "$data" ]]; then
         out="$(curl -fsSk --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 90 \
@@ -606,7 +578,7 @@ else
 fi
 
 # =========================================================================
-# 12 WINGS CONFIG (native 8080 + TLS)
+# 12 WINGS CONFIG
 # =========================================================================
 STEP="12 Wings config"
 banner "[12] Menulis konfigurasi Wings (native :$DAEMON_PORT + TLS)"
@@ -642,7 +614,6 @@ EOFCFG
 UUID_DB="$(mariadb -u root panel -N -e "SELECT uuid FROM nodes WHERE id=$NODE_ID;" 2>/dev/null || true)"
 TOKEN_ID_DB="$(mariadb -u root panel -N -e "SELECT daemon_token_id FROM nodes WHERE id=$NODE_ID;" 2>/dev/null || true)"
 TOKEN_DB_ENC="$(mariadb -u root panel -N -e "SELECT daemon_token FROM nodes WHERE id=$NODE_ID;" 2>/dev/null || true)"
-# kolom port wings di DB panel bernama daemonListen (camelCase)
 [[ -n "$UUID_DB" && -n "$TOKEN_ID_DB" && -n "$TOKEN_DB_ENC" ]] || error_exit 1 "Gagal baca node token dari DB panel"
 
 cat > "$WORK_DIR/decrypt_token.php" <<'PHP'
@@ -656,7 +627,6 @@ TOKEN_PLAIN="$(cd /var/www/pterodactyl && ENC_TOKEN="$TOKEN_DB_ENC" php "$WORK_D
 [[ -n "$TOKEN_PLAIN" ]] || error_exit 1 "Gagal decrypt daemon token node"
 sed -i "s|PLACEHOLDER_TOKEN_ID|${TOKEN_ID_DB}|; s|PLACEHOLDER_TOKEN|${TOKEN_PLAIN}|" "$WORK_DIR/node-config.raw"
 
-# UUID config wings harus = uuid node di DB (kalau tidak, panel menolak koneksi)
 if [[ -n "$UUID_DB" ]]; then
     sed -i "s|^uuid: .*|uuid: ${UUID_DB}|" "$WORK_DIR/node-config.raw"
 fi
@@ -871,6 +841,26 @@ done
 PANEL_CODE="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$PANEL_DOMAIN" || echo 000)"
 echo "Panel HTTP : $PANEL_CODE"
 [[ "$PANEL_CODE" == "200" || "$PANEL_CODE" == "302" ]] || error_exit 1 "Panel tidak reachable (code $PANEL_CODE)"
+
+# =========================================================================
+# FIX v3.3: VERIFIKASI HTTPS & MIXED CONTENT
+# =========================================================================
+echo
+echo "===== VERIFIKASI HTTPS ====="
+if command -v openssl >/dev/null 2>&1; then
+    SSL_VERIFY="$(openssl s_client -connect "${PANEL_DOMAIN}:443" -servername "$PANEL_DOMAIN" </dev/null 2>/dev/null | grep -m1 'Verify return code' || true)"
+    echo "SSL Chain : ${SSL_VERIFY:-tidak bisa cek}"
+fi
+MIXED="$(curl -s --max-time 15 "https://$PANEL_DOMAIN" 2>/dev/null | grep -oE 'http://[^"'\'']+' | grep -v "$PANEL_DOMAIN" | head -3 || true)"
+if [[ -n "$MIXED" ]]; then
+    warn "Terdeteksi URL http:// di HTML (mixed content):"
+    echo "$MIXED"
+else
+    ok "Tidak ada mixed content (semua asset HTTPS)."
+fi
+WS_CHECK="$(curl -s --max-time 15 "https://$PANEL_DOMAIN" 2>/dev/null | grep -oE 'ws://[^"'\'']+' | head -1 || true)"
+[[ -z "$WS_CHECK" ]] && ok "WebSocket URL aman (wss:// atau tidak ada di HTML)." || warn "Masih ada ws:// di HTML: $WS_CHECK"
+echo
 
 banner "INSTALLASI SELESAI"
 echo
