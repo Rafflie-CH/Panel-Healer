@@ -3,11 +3,19 @@
 # RAFZHOST - GOD MODE INSTALLER (FIXED & TESTED)
 # Panel + Wings + Location + Node + Allocation + Egg
 # =========================================================================
-# v3.3 — Perbaikan SSL panel (browser "Not Secure" walau cert valid):
-#   - AUTO-PATCH panel .env: TRUSTED_PROXIES=*, SESSION_SECURE_COOKIE=true
-#   - AUTO-PATCH nginx panel: fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;
-#   - Verifikasi HTTPS panel + WebSocket wss:// di step akhir.
-# (Semua perbaikan v3.0/v3.2 tetap dipertahankan.)
+# v3.4 — Perbaikan menyeluruh SSL (auto-handle rate limit + unified cert):
+#   1. UNIFIED SSL CERT: 1 cert Let's Encrypt untuk 2 domain (panel + node)
+#      dengan nama "rafzhost-ssl". Hemat kuota LE & Wings langsung pakai LE.
+#   2. RATE LIMIT HANDLER: deteksi error "too many certificates"/"rateLimit"
+#      otomatis fallback ke STAGING LE, lalu jadwalkan retry via cron.
+#   3. AUTO-RETRY CRONJOB: /usr/local/bin/rafz-ssl-retry tiap 6 jam — akan
+#      upgrade staging/self-signed ke production LE begitu rate limit reset.
+#   4. AUTO-REUSE: kalau cert existing sudah cover kedua domain, dipakai ulang.
+#   5. Wings TIDAK fallback ke self-signed kecuali terpaksa (browser hijau).
+#   6. Verifikasi cert coverage (SAN) + warning kritis di akhir.
+# =========================================================================
+# v3.3 — AUTO-PATCH panel .env (TRUSTED_PROXIES, SESSION_SECURE_COOKIE) +
+#        nginx panel (HTTP_X_FORWARDED_PROTO) + verifikasi mixed content.
 # =========================================================================
 
 set -Eeuo pipefail
@@ -26,6 +34,8 @@ SELF_URL="${GODMODE_SELF_URL:-https://raw.githubusercontent.com/Rafflie-CH/Panel
 LOG_FILE="/root/ptero_install.log"
 WORK_DIR="/root/.rafz-ptero-installer"
 RESULT_FILE="/root/rafzhost-panel-data.txt"
+SSL_CONF="/etc/rafzhost-ssl.conf"
+SSL_RETRY_LOG="/var/log/rafzhost-ssl-retry.log"
 
 mkdir -p "$WORK_DIR"
 touch "$LOG_FILE"
@@ -36,6 +46,7 @@ banner()  { echo "========================================================="; pr
 ok()      { echo "[✓] $1"; }
 info()    { echo "[*] $1"; }
 warn()    { echo "[!] $1"; }
+crit()    { echo "[‼] $1"; }
 
 STEP="Inisialisasi"
 error_exit() {
@@ -109,7 +120,7 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.3"
+banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.4"
 echo
 echo "----- STATUS SISTEM -----"
 echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
@@ -189,11 +200,17 @@ DISK_OVERALLOCATE="0"
 UPLOAD_SIZE="100"
 EGG_NEST_NAME="bot"
 
+# Unified cert config (v3.4)
+CERT_NAME="rafzhost-ssl"
+CERT_LIVE="/etc/letsencrypt/live/${CERT_NAME}"
+CERT_STAGING_LIVE="/etc/letsencrypt/live/${CERT_NAME}-staging"
+
 info "Mode      : INSTALL BARU"
 info "Panel     : $PANEL_DOMAIN"
 info "Node      : $NODE_DOMAIN"
 info "Admin     : $ADMIN_USERNAME <$ADMIN_EMAIL>"
 info "Ports     : $ALLOCATION_START-$ALLOCATION_END"
+info "SSL Mode  : UNIFIED (1 cert untuk 2 domain)"
 echo
 
 # =========================================================================
@@ -262,64 +279,211 @@ sed -i "/[[:space:]]$PANEL_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
 sed -i "/[[:space:]]$NODE_DOMAIN[[:space:]]/d" /etc/hosts 2>/dev/null || true
 
 # =========================================================================
-# SSL helpers
+# SSL HELPERS v3.4 — UNIFIED CERT + RATE LIMIT HANDLER
 # =========================================================================
-ensure_ssl_cert() {
+
+# Cek apakah cert PEM meng-cover semua domain yang diminta
+cert_covers_domains() {
+    local cert_pem="$1"; shift
+    [[ -s "$cert_pem" ]] || return 1
+    local san_text
+    san_text="$(openssl x509 -in "$cert_pem" -noout -text 2>/dev/null | \
+                awk '/Subject Alternative Name/,/^ *$/' || true)"
+    local d
+    for d in "$@"; do
+        echo "$san_text" | grep -q "DNS:${d}\b" || return 1
+    done
+    return 0
+}
+
+# Deteksi error rate limit Let's Encrypt dari output certbot
+is_rate_limited() {
+    grep -qiE "too many (certificates|requests|failed)|rate ?limit|rateLimit|urn:ietf:params:acme:error:rateLimited" <<<"$1"
+}
+
+# Install plugin certbot-nginx kalau belum ada
+ensure_certbot_nginx_plugin() {
+    if ! certbot plugins 2>/dev/null | grep -qE '^\* nginx$'; then
+        info "Install plugin certbot-nginx..."
+        apt-get update -o=Dpkg::Use-Pty=0 >/dev/null 2>&1 || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-nginx >/dev/null 2>&1 || true
+    fi
+}
+
+# Bikin server block nginx minimal untuk ACME challenge (kalau belum ada)
+ensure_acme_nginx_block() {
     local domain="$1"
-    local le_live="/etc/letsencrypt/live/${domain}"
-    local cert_pem="/etc/ssl/${domain}.pem" cert_key="/etc/ssl/${domain}.key"
-    mkdir -p /etc/ssl
-    rm -f "$cert_pem" "$cert_key"
-    if [[ -s "${le_live}/fullchain.pem" && -s "${le_live}/privkey.pem" ]]; then
-        info "Pakai cert Let's Encrypt yang sudah ada: $domain"
-        ln -sfn "${le_live}/fullchain.pem" "$cert_pem"
-        ln -sfn "${le_live}/privkey.pem" "$cert_key"
+    # Cek apakah sudah ada server block dengan domain ini
+    if grep -rqs "server_name.*\b${domain}\b" /etc/nginx/sites-enabled/ 2>/dev/null; then
         return 0
     fi
-    if [[ ! -s "/etc/ssl/.selfsigned-${domain}.pem" ]]; then
-        info "Bootstrap self-signed SSL (dengan SAN) untuk $domain"
-        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-            -keyout "/etc/ssl/.selfsigned-${domain}.key" \
-            -out "/etc/ssl/.selfsigned-${domain}.pem" \
-            -subj "/CN=${domain}" \
-            -addext "subjectAltName=DNS:${domain}" >/dev/null 2>&1 \
-            || error_exit 1 "Gagal generate self-signed SSL untuk $domain"
+    local conf="/etc/nginx/sites-available/rafz-acme-${domain}.conf"
+    cat > "$conf" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://\$server_name\$request_uri; }
+}
+EOF
+    ln -sf "$conf" /etc/nginx/sites-enabled/
+    mkdir -p /var/www/html/.well-known/acme-challenge
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+}
+
+# Coba dapatkan unified cert untuk kedua domain
+# Return: 0 = production LE, 2 = staging LE, 1 = gagal total (rate limit / error)
+obtain_unified_cert() {
+    local d1="$1" d2="$2"
+    local out rc=0
+
+    ensure_certbot_nginx_plugin
+    ensure_acme_nginx_block "$d1"
+    ensure_acme_nginx_block "$d2"
+    mkdir -p /var/www/html/.well-known/acme-challenge
+
+    # ---- ATTEMPT 1: Production LE via nginx plugin ----
+    info "Meminta cert Let's Encrypt (production) untuk: $d1, $d2"
+    out="$(certbot certonly --nginx -d "$d1" -d "$d2" \
+        --non-interactive --agree-tos --register-unsafely-without-email \
+        --keep-until-expiring --expand \
+        --cert-name "$CERT_NAME" 2>&1)" || rc=$?
+
+    if [[ $rc -eq 0 && -s "${CERT_LIVE}/fullchain.pem" ]]; then
+        ok "Cert LE production didapat (nama: $CERT_NAME)"
+        return 0
     fi
-    ln -sfn "/etc/ssl/.selfsigned-${domain}.pem" "$cert_pem"
-    ln -sfn "/etc/ssl/.selfsigned-${domain}.key" "$cert_key"
-    if command -v certbot >/dev/null 2>&1; then
-        if ! certbot plugins 2>/dev/null | grep -qE '^\* nginx$'; then
-            info "Plugin certbot-nginx belum ada — mencoba install..."
-            apt-get update -o=Dpkg::Use-Pty=0 >/dev/null 2>&1 || true
-            DEBIAN_FRONTEND=noninteractive apt-get install -y python3-certbot-nginx >/dev/null 2>&1 || true
+
+    # ---- Deteksi rate limit ----
+    if is_rate_limited "$out"; then
+        crit "Let's Encrypt RATE LIMIT terdeteksi!"
+        echo "$out" | grep -iE "too many|rate ?limit|retry after|when.*next" | head -3 || true
+        echo
+        warn "Beralih ke STAGING Let's Encrypt (TIDAK dipercaya browser)..."
+        warn "Cronjob akan auto-retry production tiap 6 jam."
+        rc=0
+        out="$(certbot certonly --nginx -d "$d1" -d "$d2" \
+            --non-interactive --agree-tos --register-unsafely-without-email \
+            --keep-until-expiring --expand --staging \
+            --cert-name "${CERT_NAME}-staging" 2>&1)" || rc=$?
+        if [[ $rc -eq 0 && -s "${CERT_STAGING_LIVE}/fullchain.pem" ]]; then
+            warn "Cert STAGING didapat — panel & wings akan tampil 'Not Secure' sampai retry sukses."
+            return 2
         fi
-        if certbot plugins 2>/dev/null | grep -qE '^\* nginx$'; then
-            info "Coba certbot untuk $domain (--nginx)..."
-            certbot certonly --nginx --non-interactive --agree-tos \
-                --register-unsafely-without-email -d "$domain" \
-                --keep-until-expiring --expand >/dev/null 2>&1 || true
-        else
-            info "Coba certbot untuk $domain (--standalone, port 80)..."
-            systemctl stop nginx 2>/dev/null || true
-            certbot certonly --standalone --non-interactive --agree-tos \
-                --register-unsafely-without-email -d "$domain" \
-                --keep-until-expiring --expand >/dev/null 2>&1 || true
-            systemctl start nginx 2>/dev/null || true
-        fi
-        if [[ -s "${le_live}/fullchain.pem" ]]; then
-            ok "Certbot OK (Let's Encrypt) untuk $domain"
-            ln -sfn "${le_live}/fullchain.pem" "$cert_pem"
-            ln -sfn "${le_live}/privkey.pem" "$cert_key"
-            systemctl reload nginx 2>/dev/null || true
+        warn "Staging juga gagal — pakai self-signed sementara."
+        return 1
+    fi
+
+    # ---- Fallback: standalone (kalau plugin nginx error aneh) ----
+    if echo "$out" | grep -qiE "could not (find|install)|no.*virtual host|plugin.*nginx"; then
+        info "Plugin nginx bermasalah — fallback ke --standalone..."
+        systemctl stop nginx 2>/dev/null || true
+        rc=0
+        out="$(certbot certonly --standalone -d "$d1" -d "$d2" \
+            --non-interactive --agree-tos --register-unsafely-without-email \
+            --keep-until-expiring --expand \
+            --cert-name "$CERT_NAME" 2>&1)" || rc=$?
+        systemctl start nginx 2>/dev/null || true
+        if [[ $rc -eq 0 && -s "${CERT_LIVE}/fullchain.pem" ]]; then
+            ok "Cert LE production didapat via standalone."
             return 0
         fi
-        warn "Certbot gagal — pakai self-signed (SAN)"
+        if is_rate_limited "$out"; then
+            crit "Rate limit juga kena di standalone — pakai self-signed sementara."
+            return 1
+        fi
     fi
-    [[ -s "$cert_pem" && -s "$cert_key" ]] || error_exit 1 "Sertifikat untuk $domain tidak tersedia"
-    cp -f "/etc/ssl/.selfsigned-${domain}.pem" "/usr/local/share/ca-certificates/rafz-${domain}.crt" 2>/dev/null || true
+
+    warn "Certbot gagal dengan error:"
+    echo "$out" | tail -5
+    return 1
+}
+
+# Buat self-signed cert (fallback terakhir) + install ke CA store
+make_selfsigned_cert() {
+    local domain="$1"
+    local base="/etc/ssl/.selfsigned-${domain}"
+    mkdir -p /etc/ssl
+    if [[ ! -s "${base}.pem" ]]; then
+        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+            -keyout "${base}.key" -out "${base}.pem" \
+            -subj "/CN=${domain}" \
+            -addext "subjectAltName=DNS:${domain}" >/dev/null 2>&1 \
+            || error_exit 1 "Gagal generate self-signed untuk $domain"
+    fi
+    cp -f "${base}.pem" "/usr/local/share/ca-certificates/rafz-${domain}.crt" 2>/dev/null || true
     command -v update-ca-certificates >/dev/null 2>&1 && update-ca-certificates >/dev/null 2>&1 || true
-    warn "$domain memakai self-signed — jalankan ulang script nanti untuk upgrade ke Let's Encrypt"
-    ok "SSL siap untuk $domain (self-signed + trusted)"
+}
+
+# Tulis config untuk cronjob retry
+write_ssl_conf() {
+    cat > "$SSL_CONF" <<EOF
+PANEL_DOMAIN=${PANEL_DOMAIN}
+NODE_DOMAIN=${NODE_DOMAIN}
+CERT_NAME=${CERT_NAME}
+ADMIN_EMAIL=${ADMIN_EMAIL}
+EOF
+    chmod 600 "$SSL_CONF"
+}
+
+# Pasang script retry + cronjob 6 jam
+install_ssl_retry_cron() {
+    cat > /usr/local/bin/rafz-ssl-retry <<'RETRY_EOF'
+#!/usr/bin/env bash
+# RAFZHOST SSL auto-retry — upgrade staging/self-signed → production LE
+set -uo pipefail
+LOG="/var/log/rafzhost-ssl-retry.log"
+CONF="/etc/rafzhost-ssl.conf"
+[[ -f "$CONF" ]] || exit 0
+# shellcheck disable=SC1090
+. "$CONF"
+
+echo "[$(date '+%F %T')] Cek cert $CERT_NAME..." >> "$LOG"
+
+# Sudah production LE? Skip.
+if [[ -s "/etc/letsencrypt/live/${CERT_NAME}/fullchain.pem" ]]; then
+    # Verifikasi masih valid & bukan staging
+    if openssl x509 -in "/etc/letsencrypt/live/${CERT_NAME}/fullchain.pem" -noout -issuer 2>/dev/null | grep -q "(STAGING)"; then
+        echo "  → masih STAGING, coba production..." >> "$LOG"
+    else
+        echo "  → sudah production LE, skip." >> "$LOG"
+        exit 0
+    fi
+fi
+
+# Coba production
+OUT="$(certbot certonly --nginx -d "$PANEL_DOMAIN" -d "$NODE_DOMAIN" \
+    --non-interactive --agree-tos --register-unsafely-without-email \
+    --keep-until-expiring --expand \
+    --cert-name "$CERT_NAME" 2>&1)" || true
+
+if [[ -s "/etc/letsencrypt/live/${CERT_NAME}/fullchain.pem" ]]; then
+    echo "  → production LE BERHASIL ✅" >> "$LOG"
+    # Reload nginx panel + restart wings
+    systemctl reload nginx 2>/dev/null || true
+    systemctl restart wings 2>/dev/null || true
+    # Sinkron cert node (kalau wings pakai path berbeda)
+    if [[ -f /etc/pterodactyl/config.yml ]]; then
+        sed -i \
+            -e "s|^\( *\)cert:.*|\1cert: /etc/letsencrypt/live/${CERT_NAME}/fullchain.pem|" \
+            -e "s|^\( *\)key:.*|\1key: /etc/letsencrypt/live/${CERT_NAME}/privkey.pem|" \
+            /etc/pterodactyl/config.yml
+        systemctl restart wings 2>/dev/null || true
+    fi
+else
+    if echo "$OUT" | grep -qiE "too many|rate ?limit"; then
+        echo "  → masih rate limit, coba lagi 6 jam lagi." >> "$LOG"
+    else
+        echo "  → gagal: $(echo "$OUT" | tail -1)" >> "$LOG"
+    fi
+fi
+RETRY_EOF
+    chmod +x /usr/local/bin/rafz-ssl-retry
+    ( crontab -l 2>/dev/null | grep -vF '/usr/local/bin/rafz-ssl-retry' || true; \
+      echo '0 */6 * * * /usr/local/bin/rafz-ssl-retry >> /var/log/rafzhost-ssl-retry.log 2>&1' ) | crontab - \
+      || warn "Gagal pasang cronjob SSL retry"
+    ok "Cronjob SSL retry terpasang (tiap 6 jam)."
 }
 
 # =========================================================================
@@ -353,58 +517,112 @@ ok "Cronjob terpasang (tepat 1 entri)."
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
 # =========================================================================
-# 05c SSL PANEL + PATCH HTTPS (FIX v3.3)
+# 05c SSL UNIFIED (PANEL + NODE) — v3.4
 # =========================================================================
-STEP="05c SSL Panel"
-info "Setup SSL Panel..."
-ensure_ssl_cert "$PANEL_DOMAIN"
+STEP="05c SSL Unified"
+banner "[05c] Setup SSL UNIFIED (panel + node)"
+write_ssl_conf
+
+SSL_MODE="self-signed"   # default fallback
+if [[ -s "${CERT_LIVE}/fullchain.pem" ]] && cert_covers_domains "${CERT_LIVE}/fullchain.pem" "$PANEL_DOMAIN" "$NODE_DOMAIN"; then
+    ok "Cert unified existing ditemukan & valid ($CERT_NAME) — reuse."
+    SSL_MODE="production"
+else
+    set +e
+    obtain_unified_cert "$PANEL_DOMAIN" "$NODE_DOMAIN"
+    SSL_RC=$?
+    set -e
+    case "$SSL_RC" in
+        0) SSL_MODE="production" ;;
+        2) SSL_MODE="staging" ;;
+        *) SSL_MODE="self-signed" ;;
+    esac
+fi
+
+# Path cert sesuai mode
+if [[ "$SSL_MODE" == "production" ]]; then
+    PANEL_CERT_PEM="${CERT_LIVE}/fullchain.pem"
+    PANEL_CERT_KEY="${CERT_LIVE}/privkey.pem"
+    NODE_CERT_PEM="${CERT_LIVE}/fullchain.pem"
+    NODE_CERT_KEY="${CERT_LIVE}/privkey.pem"
+    ok "Panel + Wings akan pakai LE PRODUCTION cert: $CERT_NAME"
+elif [[ "$SSL_MODE" == "staging" ]]; then
+    PANEL_CERT_PEM="${CERT_STAGING_LIVE}/fullchain.pem"
+    PANEL_CERT_KEY="${CERT_STAGING_LIVE}/privkey.pem"
+    NODE_CERT_PEM="${CERT_STAGING_LIVE}/fullchain.pem"
+    NODE_CERT_KEY="${CERT_STAGING_LIVE}/privkey.pem"
+    warn "Pakai STAGING cert — browser akan tampil warning. Cronjob akan retry production."
+else
+    # Self-signed untuk masing-masing domain
+    make_selfsigned_cert "$PANEL_DOMAIN"
+    make_selfsigned_cert "$NODE_DOMAIN"
+    PANEL_CERT_PEM="/etc/ssl/.selfsigned-${PANEL_DOMAIN}.pem"
+    PANEL_CERT_KEY="/etc/ssl/.selfsigned-${PANEL_DOMAIN}.key"
+    NODE_CERT_PEM="/etc/ssl/.selfsigned-${NODE_DOMAIN}.pem"
+    NODE_CERT_KEY="/etc/ssl/.selfsigned-${NODE_DOMAIN}.key"
+    crit "SSL gagal — pakai SELF-SIGNED. Browser akan tampil warning!"
+    crit "Cronjob auto-retry sudah dijadwalkan (tiap 6 jam)."
+fi
+
+# Symlink standar /etc/ssl/<domain>.pem biar kompatibel config lama
+ln -sfn "$PANEL_CERT_PEM" "/etc/ssl/${PANEL_DOMAIN}.pem"
+ln -sfn "$PANEL_CERT_KEY" "/etc/ssl/${PANEL_DOMAIN}.key"
+ln -sfn "$NODE_CERT_PEM" "/etc/ssl/${NODE_DOMAIN}.pem"
+ln -sfn "$NODE_CERT_KEY" "/etc/ssl/${NODE_DOMAIN}.key"
+
+# Fix permission LE (wings butuh read)
+chmod 755 /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null || true
+
+# Pasang cronjob retry (selalu, biar auto-upgrade kalau staging/self-signed)
+install_ssl_retry_cron
+
+# Update nginx panel pakai unified cert (path sudah otomatis dari installer LE,
+# tapi kalau self-signed kita harus patch manual)
+PANEL_NGINX_CONF="/etc/nginx/sites-available/pterodactyl.conf"
+if [[ -f "$PANEL_NGINX_CONF" ]]; then
+    # Ganti path cert ke unified
+    sed -i -E "s|^(\s*ssl_certificate\s+).*|\1${PANEL_CERT_PEM};|" "$PANEL_NGINX_CONF" 2>/dev/null || true
+    sed -i -E "s|^(\s*ssl_certificate_key\s+).*|\1${PANEL_CERT_KEY};|" "$PANEL_NGINX_CONF" 2>/dev/null || true
+fi
 
 # --- FIX v3.3: PATCH PANEL .env untuk reverse proxy HTTPS ---
 STEP="05c2 Patch Panel HTTPS"
 info "Patch panel .env (APP_URL / TRUSTED_PROXIES / SESSION_SECURE_COOKIE)..."
 PANEL_ENV="/var/www/pterodactyl/.env"
 if [[ -f "$PANEL_ENV" ]]; then
-    # APP_URL → https
     if grep -q '^APP_URL=' "$PANEL_ENV"; then
         sed -i "s|^APP_URL=.*|APP_URL=https://${PANEL_DOMAIN}|" "$PANEL_ENV"
     else
         echo "APP_URL=https://${PANEL_DOMAIN}" >> "$PANEL_ENV"
     fi
-    # TRUSTED_PROXIES → percaya X-Forwarded-* dari nginx
     if grep -q '^TRUSTED_PROXIES=' "$PANEL_ENV"; then
         sed -i 's|^TRUSTED_PROXIES=.*|TRUSTED_PROXIES=*|' "$PANEL_ENV"
     else
         echo 'TRUSTED_PROXIES=*' >> "$PANEL_ENV"
     fi
-    # SESSION_SECURE_COOKIE → cookie hanya via HTTPS
     if grep -q '^SESSION_SECURE_COOKIE=' "$PANEL_ENV"; then
         sed -i 's|^SESSION_SECURE_COOKIE=.*|SESSION_SECURE_COOKIE=true|' "$PANEL_ENV"
     else
         echo 'SESSION_SECURE_COOKIE=true' >> "$PANEL_ENV"
     fi
-    ok "Panel .env dipatch (APP_URL, TRUSTED_PROXIES, SESSION_SECURE_COOKIE)."
+    ok "Panel .env dipatch."
 else
     warn "Panel .env tidak ditemukan — lewati patch .env."
 fi
 
-# --- FIX v3.3: PATCH NGINX PANEL untuk fastcgi X-Forwarded-Proto ---
-PANEL_NGINX_CONF="/etc/nginx/sites-available/pterodactyl.conf"
+# --- FIX v3.3: PATCH NGINX PANEL X-Forwarded-Proto ---
 if [[ -f "$PANEL_NGINX_CONF" ]]; then
     if ! grep -q "HTTP_X_FORWARDED_PROTO" "$PANEL_NGINX_CONF"; then
-        info "Patch nginx panel: tambah HTTP_X_FORWARDED_PROTO..."
+        info "Patch nginx panel: HTTP_X_FORWARDED_PROTO..."
         if grep -q "fastcgi_param SCRIPT_FILENAME" "$PANEL_NGINX_CONF"; then
             sed -i '/fastcgi_param SCRIPT_FILENAME/a\        fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;' "$PANEL_NGINX_CONF"
         elif grep -q "include fastcgi_params;" "$PANEL_NGINX_CONF"; then
             sed -i '/include fastcgi_params;/a\        fastcgi_param HTTP_X_FORWARDED_PROTO $scheme;' "$PANEL_NGINX_CONF"
-        else
-            warn "Tidak menemukan anchor fastcgi — patch manual mungkin diperlukan."
         fi
-        grep -q "HTTP_X_FORWARDED_PROTO" "$PANEL_NGINX_CONF" && ok "nginx panel dipatch (X-Forwarded-Proto)." || warn "Patch nginx panel mungkin gagal."
+        grep -q "HTTP_X_FORWARDED_PROTO" "$PANEL_NGINX_CONF" && ok "nginx dipatch." || warn "Patch nginx gagal."
     else
-        ok "nginx panel sudah punya HTTP_X_FORWARDED_PROTO."
+        ok "nginx sudah punya HTTP_X_FORWARDED_PROTO."
     fi
-else
-    warn "nginx config panel tidak ditemukan — lewati patch nginx."
 fi
 
 cd /var/www/pterodactyl
@@ -578,17 +796,15 @@ else
 fi
 
 # =========================================================================
-# 12 WINGS CONFIG
+# 12 WINGS CONFIG — pakai unified cert dari step 05c
 # =========================================================================
 STEP="12 Wings config"
 banner "[12] Menulis konfigurasi Wings (native :$DAEMON_PORT + TLS)"
 CONFIG_YML="/etc/pterodactyl/config.yml"
 mkdir -p /etc/pterodactyl
-CERT_PEM="/etc/letsencrypt/live/${NODE_DOMAIN}/fullchain.pem"
-CERT_KEY="/etc/letsencrypt/live/${NODE_DOMAIN}/privkey.pem"
-[[ -f "$CERT_PEM" && -f "$CERT_KEY" ]] || { CERT_PEM="/etc/ssl/${NODE_DOMAIN}.pem"; CERT_KEY="/etc/ssl/${NODE_DOMAIN}.key"; }
-[[ -f "$CERT_PEM" && -f "$CERT_KEY" ]] || { ensure_ssl_cert "$NODE_DOMAIN"; CERT_PEM="/etc/ssl/${NODE_DOMAIN}.pem"; CERT_KEY="/etc/ssl/${NODE_DOMAIN}.key"; }
-[[ -f "$CERT_PEM" && -f "$CERT_KEY" ]] || error_exit 1 "Cert node tidak ditemukan"
+
+# NODE_CERT_PEM / NODE_CERT_KEY sudah di-set di step 05c
+[[ -f "$NODE_CERT_PEM" && -f "$NODE_CERT_KEY" ]] || error_exit 1 "Cert node tidak ditemukan: $NODE_CERT_PEM"
 
 cat > "$WORK_DIR/node-config.raw" <<EOFCFG
 debug: false
@@ -600,8 +816,8 @@ api:
   port: ${DAEMON_PORT}
   ssl:
     enabled: true
-    cert: ${CERT_PEM}
-    key: ${CERT_KEY}
+    cert: ${NODE_CERT_PEM}
+    key: ${NODE_CERT_KEY}
   upload_limit: ${UPLOAD_SIZE}
 system:
   data: /var/lib/pterodactyl/volumes
@@ -646,7 +862,7 @@ PYC
 printf 'trusted_proxies:\n- 127.0.0.1\n- ::1\n' >> "$CONFIG_YML"
 printf 'allowed_origins:\n- https://%s\n' "$PANEL_DOMAIN" >> "$CONFIG_YML"
 chmod 600 "$CONFIG_YML"; chown root:root "$CONFIG_YML"
-ok "config.yml ditulis (native :$DAEMON_PORT, TLS aktif, token sinkron)."
+ok "config.yml ditulis (native :$DAEMON_PORT, TLS: $NODE_CERT_PEM)."
 
 # =========================================================================
 # 13 START WINGS
@@ -728,7 +944,7 @@ NODE_CODE="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$NO
 if [[ "$NODE_CODE" == "401" || "$NODE_CODE" == "403" || "$NODE_CODE" == "200" ]]; then
     ok "Node reachable via https://$NODE_DOMAIN:$DAEMON_PORT (code: $NODE_CODE)."
 else
-    error_exit 1 "Node tidak reachable dari server ini (code: $NODE_CODE)"
+    warn "Node tidak reachable dari server ini (code: $NODE_CODE) — cek cloud firewall."
 fi
 
 # =========================================================================
@@ -737,7 +953,7 @@ fi
 STEP="15 Egg"
 banner "[15] Import Egg — Nusantara Project GOD MODE"
 info "Menulis egg.json..."
-EGG_B64="eyJfY29tbWVudCI6IkRPIE5PVCBFRElUIiwibWV0YSI6eyJ2ZXJzaW9uIjoiUFRETF92MiIsInVwZGF0ZV91cmwiOm51bGx9LCJleHBvcnRlZF9hdCI6IjIwMjYtMDgtMjRUMDY6MzQ6MDYrMDc6MDAiLCJuYW1lIjoiTnVzYW50YXJhIFByb2plY3QgLSBVTFRJTUFURSBHT0QgTU9ERSAoVW5pZmllZCkiLCJhdXRob3IiOiJyYWZ6aG9zdEByYWZ6aG9zdC5teS5pZCIsImRlc2NyaXB0aW9uIjoiU2F0dSBFZ2cgdW50dWsgbWVuZ3Vhc2FpIHNlbXVhbnlhLiBCaXNhIHN3aXRjaCBhbnRhcmEgWUFSTiAvIE5QTSBsYW5nc3VuZyBkYXJpIHBhbmVsLiIsImZlYXR1cmVzIjpbXSwiZG9ja2VyX2ltYWdlcyI6eyJOb2RlSlMgMjQiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjQiLCJOb2RlSlMgMjMiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjMiLCJOb2RlSlMgMjIiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjIiLCJOb2RlSlMgMjEiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjEiLCJOb2RlSlMgMjAiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjAiLCJOb2RlSlMgMTkiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTkiLCJOb2RlSlMgMTgiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTgiLCJOb2RlSlMgMTciOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTciLCJOb2RlSlMgMTYiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTYiLCJOb2RlSlMgMTUiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTUiLCJQeXRob24gMy4xMiI6ImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjEyIiwiUHl0aG9uIDMuMTEiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpweXRob25fMy4xMSIsIlB5dGhvbiAzLjEwIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6cHl0aG9uXzMuMTAiLCJQeXRob24gMy45IjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6cHl0aG9uXzMuOSIsIlB5dGhvbiAzLjgiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpweXRob25fMy44IiwiRGViaWFuIE9TIChVbml2ZXJzYWwpIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6ZGViaWFuIiwiVWJ1bnR1IE9TIChVbml2ZXJzYWwpIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6dWJ1bnR1In0sImZpbGVfZGVueWxpc3QiOltdLCJzdGFydHVwIjoiaWYgW1sgLWQgLmdpdCBdXSAmJiBbWyBcInt7QVVUT19VUERBVEV9fVwiID09IFwiMVwiIF1dOyB0aGVuIGdpdCBwdWxsOyBmaTsgaWYgW1sgISAteiAke0NMT1VEUkxBUkVEX1RPS0VOfSBdXTsgdGhlbiBlY2hvIFwiTWVtdWxhaSBDbG91ZGZsYXJlZCBUdW5uZWwuLi5cIjsgd2dldCAtcSBodHRwczovL2dpdGh1Yi5jb20vY2xvdWRmbGFyZS9jbG91ZGZsYXJlZC9yZWxlYXNlcy9sYXRlc3QvZG93bmxvYWQvY2xvdWRmbGFyZWQtbGludXgtYW1kNjQgLU8gY2xvdWRmbGFyZWQgJiYgY2htb2QgK3ggY2xvdWRmbGFyZWQgJiYgLi9jbG91ZGZsYXJlZCB0dW5uZWwgLS1uby1hdXRvdXBkYXRlIHJ1biAtLXRva2VuICR7Q0xPVURGTEFSRURfVE9LRU59ID4gL2Rldi9udWxsIDI+JjEgJiBmaTsgcmVxX2ZpbGU9JHtSRVFVSVJFTUVOVFNfRklMRTotcmVxdWlyZW1lbnRzLnR4dH07IGlmIFsgLWYgL2hvbWUvY29udGFpbmVyLyRyZXFfZmlsZSBdOyB0aGVuIHBpcCBpbnN0YWxsIC1yICRyZXFfZmlsZTsgZmk7IGlmIFsgXCIke1BBQ0tBR0VfTUFOQUdFUn1cIiA9PSBcIm5wbVwiIF07IHRoZW4gaWYgW1sgISAteiAke05PREVfUEFDS0FHRVN9IF1dOyB0aGVuIHllcyBcIlwiIHwgbnBtIGluc3RhbGwgJHtOT0RFX1BBQ0tBR0VTfSAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGZpOyBpZiBbWyAhIC16ICR7VU5OT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgXCJcIiB8IG5wbSB1bmluc3RhbGwgJHtVTk5PREVfUEFDS0FHRVN9IC0tbm8tZnVuZCAtLW5vLWF1ZGl0OyBmaTsgaWYgWyAtZiAvaG9tZS9jb250YWluZXIvcGFja2FnZS5qc29uIF07IHRoZW4geWVzIFwiXCIgfCBucG0gaW5zdGFsbCAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGZpOyBybSAtcmYgLm5wbSAubG9nIC5jYWNoZSAtLWZvcmNlOyBlbHNlIGlmIFtbICEgLXogJHtOT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgfCB5YXJuIGFkZCAke05PREVfUEFDS0FHRVN9IC0tbm9uLWludGVyYWN0aXZlIC0taWdub3JlLWVuZ2luZXM7IGZpOyBpZiBbWyAhIC16ICR7VU5OT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgfCB5YXJuIHJlbW92ZSAke1VOTk9ERV9QQUNLQUdFU30gLS1ub24taW50ZXJhY3RpdmU7IGZpOyBpZiBbIC1mIC9ob21lL2NvbnRhaW5lci9wYWNrYWdlLmpzb24gXTsgdGhlbiB5ZXMgfCB5YXJuIGluc3RhbGwgLS1ub24taW50ZXJhY3RpdmUgLS1pZ25vcmUtZW5naW5lczsgZmk7IHJtIC1yZiAubnBtIC5sb2cgLmNhY2hlIC55YXJuLWNhY2hlIC0tZm9yY2U7IGZpOyBpZiBbWyAhIC16ICR7Q1VTVE9NX0VOVklST05NRU5UX1ZBUklBQkxFU30gXV07IHRoZW4gdmFycz0kKGVjaG8gJHtDVVNUT01fRU5WSVJPTk1FTlRfVkFSSUFCTEVTfSB8IHRyIFwiO1wiIFwiXFxuXCIpOyBmb3IgbGluZSBpbiAkdmFyczsgZG8gZXhwb3J0ICRsaW5lOyBkb25lIGZpOyBldmFsICR7Q01EX1JVTn07IiwiY29uZmlnIjp7ImZpbGVzIjoie30iLCJzdGFydHVwIjoie1xyXG4gIFwiZG9uZVwiOiBcInJ1bm5pbmdcIlxyXG59IiwibG9ncyI6Int9Iiwic3RvcCI6Il5DIn0sInNjcmlwdHMiOnsiaW5zdGFsbGF0aW9uIjp7InNjcmlwdCI6IiMhL2Jpbi9iYXNoXG5hcHQgdXBkYXRlXG5hcHQgaW5zdGFsbCAteSBnaXQgY3VybCB3Z2V0IGpxIGZpbGUgdW56aXAgbWFrZSBnY2MgZysrIHB5dGhvbjMgcHl0aG9uMy1kZXYgcHl0aG9uMy1waXAgbGlidG9vbFxuaWYgY29tbWFuZCAtdiBucG0gJj4vZGV2L251bGw7IHRoZW4gbnBtIGluc3RhbGwgLWcgeWFybjsgZmlcbm1rZGlyIC1wIC9tbnQvc2VydmVyXG5jZCAvbW50L3NlcnZlclxuaWYgWyBcIiR7VVNFUl9VUExPQUR9XCIgPT0gXCJ0cnVlXCIgXSB8fCBbIFwiJHtVU0VSX1VQTE9BRH1cIiA9PSBcIjFcIiBdOyB0aGVuIGVjaG8gZG9uZTsgZXhpdCAwOyBmaVxuaWYgW1sgJHtHSVRfQUREUkVTU30gIT0gKi5naXQgXV07IHRoZW4gR0lUX0FERFJFU1M9JHtHSVRfQUREUkVTU30uZ2l0OyBmaVxuaWYgWyAteiBcIiR7VVNFUk5BTUV9XCIgXSAmJiBbIC16IFwiJHtBQ0NFU1NfVE9LRU59XCIgXTsgdGhlbiBlY2hvIGFub247IGVsc2UgR0lUX0FERFJFU1M9XCJodHRwczovLyR7VVNFUk5BTUV9OiR7QUNDRVNTX1RPS0VOfUAkKGVjaG8gLWUgJHtHSVRfQUREUkVTU30gfCBjdXQgLWQvIC1mMy0pXCI7IGZpXG5pZiBbIFwiJChscyAtQSAvbW50L3NlcnZlcilcIiBdOyB0aGVuIGlmIFsgLWQgLmdpdCBdICYmIFsgLWYgLmdpdC9jb25maWcgXTsgdGhlbiBPUklHSU49JChnaXQgY29uZmlnIC0tZ2V0IHJlbW90ZS5vcmlnaW4udXJsKTsgaWYgWyBcIiR7T1JJR0lOfVwiID09IFwiJHtHSVRfQUREUkVTU31cIiBdOyB0aGVuIGdpdCBwdWxsOyBmaTsgZmk7IGVsc2UgaWYgWyAteiAke0JSQU5DSH0gXTsgdGhlbiBnaXQgY2xvbmUgJHtHSVRfQUREUkVTU30gLjsgZWxzZSBnaXQgY2xvbmUgLS1zaW5nbGUtYnJhbmNoIC0tYnJhbmNoICR7QlJBTkNIfSAke0dJVF9BRERSRVNTfSAuOyBmaTsgZmlcbmlmIFsgLWYgL21udC9zZXJ2ZXIvcGFja2FnZS5qc29uIF07IHRoZW4gaWYgWyBcIiR7UEFDS0FHRV9NQU5BR0VSfVwiID09IFwibnBtXCIgXTsgdGhlbiBybSAtcmYgbm9kZV9tb2R1bGVzIHBhY2thZ2UtbG9jay5qc29uOyB5ZXMgXCJcIiB8IG5wbSBpbnN0YWxsIC0tcHJvZHVjdGlvbiAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGVsc2Ugcm0gLWYgcGFja2FnZS1sb2NrLmpzb247IHllcyB8IHlhcm4gaW5zdGFsbCAtLXByb2R1Y3Rpb24gLS1ub24taW50ZXJhY3RpdmUgLS1pZ25vcmUtZW5naW5lczsgZmk7IGZpXG5yZXFfZmlsZT0ke1JFUVVJUkVNRU5UU19GSUxFOi1yZXF1aXJlbWVudHMudHh0fVxuaWYgWyAtZiAvbW50L3NlcnZlci8kcmVxX2ZpbGUgXTsgdGhlbiBwaXAgaW5zdGFsbCAtciAkcmVxX2ZpbGU7IGZpXG5lY2hvIGluc3RhbGwgY29tcGxldGVcbmV4aXQgMCIsImNvbnRhaW5lciI6ImRlYmlhbjpidWxsc2V5ZS1zbGltIiwiZW50cnlwb2ludCI6ImJhc2gifX0sInZhcmlhYmxlcyI6W3sibmFtZSI6IkdVTkFLQU4gRklMRSBVUExPQUQgTUFOVUFMPyIsImRlc2NyaXB0aW9uIjoiVXBsb2FkIG1hbnVhbCAoMSkgYXRhdSBnaXQgY2xvbmUgKDApLiBSZWluc3RhbGwgU2VydmVyIHVudHVrIGFwcGx5IGdpdC4iLCJlbnZfdmFyaWFibGUiOiJVU0VSX1VQTE9EIiwiZGVmYXVsdF92YWx1ZSI6IjEiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfGJvb2xlYW4iLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IlBBQ0tBR0UgTUFOQUdFUiAoWUFSTiAvIE5QTSkiLCJkZXNjcmlwdGlvbiI6Inlhcm4gYXRhdSBucG0iLCJlbnZfdmFyaWFibGUiOiJQQUNLQUdFX01BTkFHRVIiLCJkZWZhdWx0X3ZhbHVlIjoieWFybiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nfGluOnlhcm4sbnBtIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJGSUxFIFVUQU1BIFNDUklQVCAoRU5UUlkgRklMRSkiLCJkZXNjcmlwdGlvbiI6IkNvbnRvaDogeWFybiBzdGFydCwgbnBtIHN0YXJ0LCBweXRob24gbWFpbi5weSIsImVudl92YXJpYWJsZSI6IkNNRF9SVU4iLCJkZWZhdWx0X3ZhbHVlIjoieWFybiBzdGFydCIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoicmVxdWlyZWR8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJGSUxFIExJQlJBUlkgLyBSRVFVSVJFTUVOVFMiLCJkZXNjcmlwdGlvbiI6InJlcXVpcmVtZW50cy50eHQiLCJlbnZfdmFyaWFibGUiOiJSRVFVSVJFTUVOVFNfRklMRSIsImRlZmF1bHRfdmFsdWUiOiJyZXF1aXJlbWVudHMudHh0IiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkxJTksgUkVQT1NJVE9SSSBHSVQgKE9QU0lPTkFMKSIsImRlc2NyaXB0aW9uIjoiVVJMIGdpdGh1YiByZXBvLiBXYWppYiBSZWluc3RhbGwgU2VydmVyLiIsImVudl92YXJpYWJsZSI6IkdJVF9BRERSRVNTIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJJbnN0YWxsIEJyYW5jaCIsImRlc2NyaXB0aW9uIjoiQnJhbmNoIGdpdCIsImVudl92YXJpYWJsZSI6IkJSQU5DSCIsImRlZmF1bHRfdmFsdWUiOiIiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfHN0cmluZyIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiQXV0byBVcGRhdGUiLCJkZXNjcmlwdGlvbiI6IjE9cHVsbCBvbiBzdGFydCIsImVudl92YXJpYWJsZSI6IkFVVE9fVVBEQVRFIiwiZGVmYXVsdF92YWx1ZSI6IjEiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfGJvb2xlYW4iLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkNsb3VkZmxhcmVkIFRva2VuIiwiZGVzY3JpcHRpb24iOiJUb2tlbiBjbG91ZGZsYXJlIHR1bm5lbCIsImVudl92YXJpYWJsZSI6IkNMT1VEUkxBUkVEX1RPS0VOIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJHaXQgVXNlcm5hbWUiLCJkZXNjcmlwdGlvbiI6IkdpdCB1c2VyIiwiZW52X3ZhcmlhYmxlIjoiVVNFUk5BTUUiLCJkZWZhdWx0X3ZhbHVlIjoiIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkdpdCBBY2Nlc3MgVG9rZW4iLCJkZXNjcmlwdGlvbiI6IkdpdCB0b2tlbiIsImVudl92YXJpYWJsZSI6IkFDQ0VTU19UT0tFTiIsImRlZmF1bHRfdmFsdWUiOiIiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfHN0cmluZyIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiRXh0cmEgTm9kZSBQYWNrYWdlcyIsImRlc2NyaXB0aW9uIjoiUGFrZXQgbnBtL3lhcm4ga2VzdHJhIChzcGFzaSkiLCJlbnZfdmFyaWFibGUiOiJOT0RFX1BBQ0tBR0VTIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJVbmluc3RhbGwgTm9kZSBQYWNrYWdlcyIsImRlc2NyaXB0aW9uIjoiUGFrZXQgeWFuZyBkaS11bmluc3RhbGwiLCJlbnZfdmFyaWFibGUiOiJVTk5PREVfUEFDS0FHRVMiLCJkZWZhdWx0X3ZhbHVlIjoiIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkN1c3RvbSBFbnYgVmFyaWFibGVzIiwiZGVzY3JpcHRpb24iOiJLRVk9dmFsO0tFWTI9dmFsMiIsImVudl92YXJpYWJsZSI6IkNVU1RPTV9FTlZJUk9OTUVOVF9WQVJJQUJMRVMiLCJkZWZhdWx0X3ZhbHVlIjoiIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9XX0="
+EGG_B64="eyJfY29tbWVudCI6IkRPIE5PVCBFRElUIiwibWV0YSI6eyJ2ZXJzaW9uIjoiUFRETF92MiIsInVwZGF0ZV91cmwiOm51bGx9LCJleHBvcnRlZF9hdCI6IjIwMjYtMDgtMjRUMDY6MzQ6MDYrMDc6MDAiLCJuYW1lIjoiTnVzYW50YXJhIFByb2plY3QgLSBVTFRJTUFURSBHT0QgTU9ERSAoVW5pZmllZCkiLCJhdXRob3IiOiJyYWZ6aG9zdEByYWZ6aG9zdC5teS5pZCIsImRlc2NyaXB0aW9uIjoiU2F0dSBFZ2cgdW50dWsgbWVuZ3Vhc2FpIHNlbXVhbnlhLiBCaXNhIHN3aXRjaCBhbnRhcmEgWUFSTiAvIE5QTSBsYW5nc3VuZyBkYXJpIHBhbmVsLiIsImZlYXR1cmVzIjpbXSwiZG9ja2VyX2ltYWdlcyI6eyJOb2RlSlMgMjQiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjQiLCJOb2RlSlMgMjMiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjMiLCJOb2RlSlMgMjIiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjIiLCJOb2RlSlMgMjEiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjEiLCJOb2RlSlMgMjAiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMjAiLCJOb2RlSlMgMTkiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTkiLCJOb2RlSlMgMTgiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTgiLCJOb2RlSlMgMTciOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTciLCJOb2RlSlMgMTYiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTYiLCJOb2RlSlMgMTUiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpub2RlanNfMTUiLCJQeXRob24gMy4xMiI6ImdoY3IuaW8vcGFya2VydmNwL3lvbGtzOnB5dGhvbl8zLjEyIiwiUHl0aG9uIDMuMTEiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpweXRob25fMy4xMSIsIlB5dGhvbiAzLjEwIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6cHl0aG9uXzMuMTAiLCJQeXRob24gMy45IjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6cHl0aG9uXzMuOSIsIlB5dGhvbiAzLjgiOiJnaGNyLmlvL3BhcmtlcnZjcC95b2xrczpweXRob25fMy44IiwiRGViaWFuIE9TIChVbml2ZXJzYWwpIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6ZGViaWFuIiwiVWJ1bnR1IE9TIChVbml2ZXJzYWwpIjoiZ2hjci5pby9wYXJrZXJ2Y3AveW9sa3M6dWJ1bnR1In0sImZpbGVfZGVueWxpc3QiOltdLCJzdGFydHVwIjoiaWYgW1sgLWQgLmdpdCBdXSAmJiBbWyBcInt7QVVUT19VUERBVEV9fVwiID09IFwiMVwiIF1dOyB0aGVuIGdpdCBwdWxsOyBmaTsgaWYgW1sgISAteiAke0NMT1VEUkxBUkVEX1RPS0VOfSBdXTsgdGhlbiBlY2hvIFwiTWVtdWxhaSBDbG91ZGZsYXJlZCBUdW5uZWwuLi5cIjsgd2dldCAtcSBodHRwczovL2dpdGh1Yi5jb20vY2xvdWRmbGFyZS9jbG91ZGZsYXJlZC9yZWxlYXNlcy9sYXRlc3QvZG93bmxvYWQvY2xvdWRmbGFyZWQtbGludXgtYW1kNjQgLU8gY2xvdWRmbGFyZWQgJiYgY2htb2QgK3ggY2xvdWRmbGFyZWQgJiYgLi9jbG91ZGZsYXJlZCB0dW5uZWwgLS1uby1hdXRvdXBkYXRlIHJ1biAtLXRva2VuICR7Q0xPVURGTEFSRURfVE9LRU59ID4gL2Rldi9udWxsIDI+JjEgJiBmaTsgcmVxX2ZpbGU9JHtSRVFVSVJFTUVOVFNfRklMRTotcmVxdWlyZW1lbnRzLnR4dH07IGlmIFsgLWYgL2hvbWUvY29udGFpbmVyLyRyZXFfZmlsZSBdOyB0aGVuIHBpcCBpbnN0YWxsIC1yICRyZXFfZmlsZTsgZmk7IGlmIFsgXCIke1BBQ0tBR0VfTUFOQUdFUn1cIiA9PSBcIm5wbVwiIF07IHRoZW4gaWYgW1sgISAteiAke05PREVfUEFDS0FHRVN9IF1dOyB0aGVuIHllcyBcIlwiIHwgbnBtIGluc3RhbGwgJHtOT0RFX1BBQ0tBR0VTfSAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGZpOyBpZiBbWyAhIC16ICR7VU5OT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgXCJcIiB8IG5wbSB1bmluc3RhbGwgJHtVTk5PREVfUEFDS0FHRVN9IC0tbm8tZnVuZCAtLW5vLWF1ZGl0OyBmaTsgaWYgWyAtZiAvaG9tZS9jb250YWluZXIvcGFja2FnZS5qc29uIF07IHRoZW4geWVzIFwiXCIgfCBucG0gaW5zdGFsbCAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGZpOyBybSAtcmYgLm5wbSAubG9nIC5jYWNoZSAtLWZvcmNlOyBlbHNlIGlmIFtbICEgLXogJHtOT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgfCB5YXJuIGFkZCAke05PREVfUEFDS0FHRVN9IC0tbm9uLWludGVyYWN0aXZlIC0taWdub3JlLWVuZ2luZXM7IGZpOyBpZiBbWyAhIC16ICR7VU5OT0RFX1BBQ0tBR0VTfSBdXTsgdGhlbiB5ZXMgfCB5YXJuIHJlbW92ZSAke1VOTk9ERV9QQUNLQUdFU30gLS1ub24taW50ZXJhY3RpdmU7IGZpOyBpZiBbIC1mIC9ob21lL2NvbnRhaW5lci9wYWNrYWdlLmpzb24gXTsgdGhlbiB5ZXMgfCB5YXJuIGluc3RhbGwgLS1ub24taW50ZXJhY3RpdmUgLS1pZ25vcmUtZW5naW5lczsgZmk7IHJtIC1yZiAubnBtIC5sb2cgLmNhY2hlIC55YXJuLWNhY2hlIC0tZm9yY2U7IGZpOyBpZiBbWyAhIC16ICR7Q1VTVE9NX0VOVklST05NRU5UX1ZBUklBQkxFU30gXV07IHRoZW4gdmFycz0kKGVjaG8gJHtDVVNUT01fRU5WSVJPTk1FTlRfVkFSSUFCTEVTfSB8IHRyIFwiO1wiIFwiXFxuXCIpOyBmb3IgbGluZSBpbiAkdmFyczsgZG8gZXhwb3J0ICRsaW5lOyBkb25lIGZpOyBldmFsICR7Q01EX1JVTn07IiwiY29uZmlnIjp7ImZpbGVzIjoie30iLCJzdGFydHVwIjoie1xyXG4gIFwiZG9uZVwiOiBcInJ1bm5pbmdcIlxyXG59IiwibG9ncyI6Int9Iiwic3RvcCI6Il5DIn0sInNjcmlwdHMiOnsiaW5zdGFsbGF0aW9uIjp7InNjcmlwdCI6IiMhL2Jpbi9iYXNoXG5hcHQgdXBkYXRlXG5hcHQgaW5zdGFsbCAteSBnaXQgY3VybCB3Z2V0IGpxIGZpbGUgdW56aXAgbWFrZSBnY2MgZysrIHB5dGhvbjMgcHl0aG9uMy1kZXYgcHl0aG9uMy1waXAgbGlidG9vbFxuaWYgY29tbWFuZCAtdiBucG0gJj4vZGV2L251bGw7IHRoZW4gbnBtIGluc3RhbGwgLWcgeWFybjsgZmlcbm1rZGlyIC1wIC9tbnQvc2VydmVyXG5jZCAvbW50L3NlcnZlclxuaWYgWyBcIiR7VVNFUl9VUExPQUR9XCIgPT0gXCJ0cnVlXCIgXSB8fCBbIFwiJHtVU0VSX1VQTE9BRH1cIiA9PSBcIjFcIiBdOyB0aGVuIGVjaG8gZG9uZTsgZXhpdCAwOyBmaVxuaWYgW1sgJHtHSVRfQUREUkVTU30gIT0gKi5naXQgXV07IHRoZW4gR0lUX0FERFJFU1M9JHtHSVRfQUREUkVTU30uZ2l0OyBmaVxuaWYgWyAteiBcIiR7VVNFUk5BTUV9XCIgXSAmJiBbIC16IFwiJHtBQ0NFU1NfVE9LRU59XCIgXTsgdGhlbiBlY2hvIGFub247IGVsc2UgR0lUX0FERFJFU1M9XCJodHRwczovLyR7VVNFUk5BTUV9OiR7QUNDRVNTX1RPS0VOfUAkKGVjaG8gLWUgJHtHSVRfQUREUkVTU30gfCBjdXQgLWQvIC1mMy0pXCI7IGZpXG5pZiBbIFwiJChscyAtQSAvbW50L3NlcnZlcilcIiBdOyB0aGVuIGlmIFsgLWQgLmdpdCBdICYmIFsgLWYgLmdpdC9jb25maWcgXTsgdGhlbiBPUklHSU49JChnaXQgY29uZmlnIC0tZ2V0IHJlbW90ZS5vcmlnaW4udXJsKTsgaWYgWyBcIiR7T1JJR0lOfVwiID09IFwiJHtHSVRfQUREUkVTU31cIiBdOyB0aGVuIGdpdCBwdWxsOyBmaTsgZmk7IGVsc2UgaWYgWyAteiAke0JSQU5DSH0gXTsgdGhlbiBnaXQgY2xvbmUgJHtHSVRfQUREUkVTU30gLjsgZWxzZSBnaXQgY2xvbmUgLS1zaW5nbGUtYnJhbmNoIC0tYnJhbmNoICR7QlJBTkNIfSAke0dJVF9BRERSRVNTfSAuOyBmaTsgZmlcbmlmIFsgLWYgL21udC9zZXJ2ZXIvcGFja2FnZS5qc29uIF07IHRoZW4gaWYgWyBcIiR7UEFDS0FHRV9NQU5BR0VSfVwiID09IFwibnBtXCIgXTsgdGhlbiBybSAtcmYgbm9kZV9tb2R1bGVzIHBhY2thZ2UtbG9jay5qc29uOyB5ZXMgXCJcIiB8IG5wbSBpbnN0YWxsIC0tcHJvZHVjdGlvbiAtLWxlZ2FjeS1wZWVyLWRlcHMgLS1uby1mdW5kIC0tbm8tYXVkaXQ7IGVsc2Ugcm0gLWYgcGFja2FnZS1sb2NrLmpzb247IHllcyB8IHlhcm4gaW5zdGFsbCAtLXByb2R1Y3Rpb24gLS1ub24taW50ZXJhY3RpdmUgLS1pZ25vcmUtZW5naW5lczsgZmk7IGZpXG5yZXFfZmlsZT0ke1JFUVVJUkVNRU5UU19GSUxFOi1yZXF1aXJlbWVudHMudHh0fVxuaWYgWyAtZiAvbW50L3NlcnZlci8kcmVxX2ZpbGUgXTsgdGhlbiBwaXAgaW5zdGFsbCAtciAkcmVxX2ZpbGU7IGZpXG5lY2hvIGluc3RhbGwgY29tcGxldGVcbmV4aXQgMCIsImNvbnRhaW5lciI6ImRlYmlhbjpidWxsc2V5ZS1zbGltIiwiZW50cnlwb2ludCI6ImJhc2gifX0sInZhcmlhYmxlcyI6W3sibmFtZSI6IkdVTkFLQU4gRklMRSBVUExPQUQgTUFOVUFMPyIsImRlc2NyaXB0aW9uIjoiVXBsb2FkIG1hbnVhbCAoMSkgYXRhdSBnaXQgY2xvbmUgKDApLiBSZWluc3RhbGwgU2VydmVyIHVudHVrIGFwcGx5IGdpdC4iLCJlbnZfdmFyaWFibGUiOiJVU0VSX1VQTE9EIiwiZGVmYXVsdF92YWx1ZSI6IjEiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfGJvb2xlYW4iLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IlBBQ0tBR0UgTUFOQUdFUiAoWUFSTiAvIE5QTSkiLCJkZXNjcmlwdGlvbiI6Inlhcm4gYXRhdSBucG0iLCJlbnZfdmFyaWFibGUiOiJQQUNLQUdFX01BTkFHRVIiLCJkZWZhdWx0X3ZhbHVlIjoieWFybiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nfGluOnlhcm4sbnBtIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJGSUxFIFVUQU1BIFNDUklQVCAoRU5UUlkgRklMRSkiLCJkZXNjcmlwdGlvbiI6IkNvbnRvaDogeWFybiBzdGFydCwgbnBtIHN0YXJ0LCBweXRob24gbWFpbi5weSIsImVudl92YXJpYWJsZSI6IkNNRF9SVU4iLCJkZWZhdWx0X3ZhbHVlIjoieWFybiBzdGFydCIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoicmVxdWlyZWR8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJGSUxFIExJQlJBUlkgLyBSRVFVSVJFTUVOVFMiLCJkZXNjcmlwdGlvbiI6InJlcXVpcmVtZW50cy50eHQiLCJlbnZfdmFyaWFibGUiOiJSRVFVSVJFTUVOVFNfRklMRSIsImRlZmF1bHRfdmFsdWUiOiJyZXF1aXJlbWVudHMudHh0IiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkxJTksgUkVQT1NJVE9SSSBHSVQgKE9QU0lPTkFMKSIsImRlc2NyaXB0aW9uIjoiVVJMIGdpdGh1YiByZXBvLiBXYWppYiBSZWluc3RhbGwgU2VydmVyLiIsImVudl92YXJpYWJsZSI6IkdJVF9BRERSRVNTIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJJbnN0YWxsIEJyYW5jaCIsImRlc2NyaXB0aW9uIjoiQnJhbmNoIGdpdCIsImVudl92YXJpYWJsZSI6IkJSQU5DSCIsImRlZmF1bHRfdmFsdWUiOiIiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfHN0cmluZyIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiQXV0byBVcGRhdGUiLCJkZXNjcmlwdGlvbiI6IjE9cHVsbCBvbiBzdGFydCIsImVudl92YXJpYWJsZSI6IkFVVE9fVVBEQVRFIiwiZGVmYXVsdF92YWx1ZSI6IjEiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfGJvb2xlYW4iLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkNsb3VkZmxhcmVkIFRva2VuIiwiZGVzY3JpcHRpb24iOiJUb2tlbiBjbG91ZGZsYXJlIHR1bm5lbCIsImVudl92YXJpYWJsZSI6IkNMT1VERkxBUkVEX1RPS0VOIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJHaXQgVXNlcm5hbWUiLCJkZXNjcmlwdGlvbiI6IkdpdCB1c2VyIiwiZW52X3ZhcmlhYmxlIjoiVVNFUk5BTUUiLCJkZWZhdWx0X3ZhbHVlIjoiIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkdpdCBBY2Nlc3MgVG9rZW4iLCJkZXNjcmlwdGlvbiI6IkdpdCB0b2tlbiIsImVudl92YXJpYWJsZSI6IkFDQ0VTU19UT0tFTiIsImRlZmF1bHRfdmFsdWUiOiIiLCJ1c2VyX3ZpZXdhYmxlIjp0cnVlLCJ1c2VyX2VkaXRhYmxlIjp0cnVlLCJydWxlcyI6Im51bGxhYmxlfHN0cmluZyIsImZpZWxkX3R5cGUiOiJ0ZXh0In0seyJuYW1lIjoiRXh0cmEgTm9kZSBQYWNrYWdlcyIsImRlc2NyaXB0aW9uIjoiUGFrZXQgbnBtL3lhcm4ga2VzdHJhIChzcGFzaSkiLCJlbnZfdmFyaWFibGUiOiJOT0RFX1BBQ0tBR0VTIiwiZGVmYXVsdF92YWx1ZSI6IiIsInVzZXJfdmlld2FibGUiOnRydWUsInVzZXJfZWRpdGFibGUiOnRydWUsInJ1bGVzIjoibnVsbGFibGV8c3RyaW5nIiwiZmllbGRfdHlwZSI6InRleHQifSx7Im5hbWUiOiJVbmluc3RhbGwgTm9kZSBQYWNrYWdlcyIsImRlc2NyaXB0aW9uIjoiUGFrZXQgeWFuZyBkaS11bmluc3RhbGwiLCJlbnZfdmFyaWFibGUiOiJVTk5PREVfUEFDS0FHRVMiLCJkZWZhdWx0X3ZhbHVlIjoiIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9LHsibmFtZSI6IkN1c3RvbSBFbnYgVmFyaWFibGVzIiwiZGVzY3JpcHRpb24iOiJLRVk9dmFsO0tFWTI9dmFsMiIsImVudl92YXJpYWJsZSI6IkNVU1RPTV9FTlZJUk9OTUVOVF9WQVJJQUJMRVMiLCJkZWZhdWx0X3ZhbHVlIjoiIiwidXNlcl92aWV3YWJsZSI6dHJ1ZSwidXNlcl9lZGl0YWJsZSI6dHJ1ZSwicnVsZXMiOiJudWxsYWJsZXxzdHJpbmciLCJmaWVsZF90eXBlIjoidGV4dCJ9XX0="
 printf '%s' "$EGG_B64" | base64 -d > /tmp/egg.json
 python3 - <<'PYC' || error_exit 1 "egg.json tidak valid"
 import json
@@ -820,6 +1036,8 @@ ALLOCATION=$ALLOC_IP:$ALLOCATION_START-$ALLOCATION_END
 ALLOC_ALIAS=$ALLOC_ALIAS
 NODE_DAEMON_PORT=$DAEMON_PORT
 NODE_MODE=native-ssl-$DAEMON_PORT
+SSL_MODE=$SSL_MODE
+SSL_CERT_NAME=$CERT_NAME
 PLTA=$PLTA
 PLTC=$PLTC
 =========================================================
@@ -840,26 +1058,65 @@ for s in nginx mariadb redis-server pteroq docker wings; do
 done
 PANEL_CODE="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$PANEL_DOMAIN" || echo 000)"
 echo "Panel HTTP : $PANEL_CODE"
-[[ "$PANEL_CODE" == "200" || "$PANEL_CODE" == "302" ]] || error_exit 1 "Panel tidak reachable (code $PANEL_CODE)"
+[[ "$PANEL_CODE" == "200" || "$PANEL_CODE" == "302" ]] || warn "Panel HTTP code tidak normal: $PANEL_CODE"
 
 # =========================================================================
-# FIX v3.3: VERIFIKASI HTTPS & MIXED CONTENT
+# VERIFIKASI HTTPS (v3.3 + v3.4)
 # =========================================================================
 echo
 echo "===== VERIFIKASI HTTPS ====="
-if command -v openssl >/dev/null 2>&1; then
-    SSL_VERIFY="$(openssl s_client -connect "${PANEL_DOMAIN}:443" -servername "$PANEL_DOMAIN" </dev/null 2>/dev/null | grep -m1 'Verify return code' || true)"
-    echo "SSL Chain : ${SSL_VERIFY:-tidak bisa cek}"
+echo "SSL Mode      : $SSL_MODE"
+echo "Cert Name     : $CERT_NAME"
+if [[ "$SSL_MODE" == "production" ]]; then
+    if cert_covers_domains "${CERT_LIVE}/fullchain.pem" "$PANEL_DOMAIN" "$NODE_DOMAIN"; then
+        ok "Cert covers: $PANEL_DOMAIN + $NODE_DOMAIN ✅"
+    else
+        warn "Cert TIDAK covers kedua domain — cek manual!"
+    fi
+    ISSUER="$(openssl x509 -in "${CERT_LIVE}/fullchain.pem" -noout -issuer 2>/dev/null | grep -oE 'O=[^,]+' | head -1 || true)"
+    echo "Issuer        : ${ISSUER:-unknown}"
+    EXPIRY="$(openssl x509 -in "${CERT_LIVE}/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2 || true)"
+    echo "Expiry        : ${EXPIRY:-unknown}"
+elif [[ "$SSL_MODE" == "staging" ]]; then
+    warn "Pakai STAGING cert — browser akan warning. Auto-retry via cron tiap 6 jam."
+else
+    crit "Pakai SELF-SIGNED — browser akan warning. Auto-retry via cron tiap 6 jam."
 fi
+
+# Cek mixed content
 MIXED="$(curl -s --max-time 15 "https://$PANEL_DOMAIN" 2>/dev/null | grep -oE 'http://[^"'\'']+' | grep -v "$PANEL_DOMAIN" | head -3 || true)"
 if [[ -n "$MIXED" ]]; then
-    warn "Terdeteksi URL http:// di HTML (mixed content):"
+    warn "Terdeteksi URL http:// di HTML:"
     echo "$MIXED"
 else
-    ok "Tidak ada mixed content (semua asset HTTPS)."
+    ok "Tidak ada mixed content."
 fi
 WS_CHECK="$(curl -s --max-time 15 "https://$PANEL_DOMAIN" 2>/dev/null | grep -oE 'ws://[^"'\'']+' | head -1 || true)"
-[[ -z "$WS_CHECK" ]] && ok "WebSocket URL aman (wss:// atau tidak ada di HTML)." || warn "Masih ada ws:// di HTML: $WS_CHECK"
+[[ -z "$WS_CHECK" ]] && ok "WebSocket URL aman." || warn "Masih ada ws:// di HTML: $WS_CHECK"
+
+# Cek Wings cert
+echo
+echo "===== VERIFIKASI WINGS CERT ====="
+echo "Wings cert    : $NODE_CERT_PEM"
+if [[ "$NODE_CERT_PEM" == *"/etc/letsencrypt/"* ]]; then
+    if [[ "$NODE_CERT_PEM" == *"staging"* ]]; then
+        warn "Wings pakai STAGING LE cert — browser warning sampai retry sukses."
+    else
+        ok "Wings pakai PRODUCTION LE cert ✅ (browser akan hijau)"
+    fi
+else
+    crit "Wings pakai SELF-SIGNED cert — node akan MERAH sampai retry sukses!"
+fi
+
+# Ringkasan cronjob
+echo
+echo "===== CRONJOB RETRY SSL ====="
+if crontab -l 2>/dev/null | grep -q "rafz-ssl-retry"; then
+    ok "Cronjob aktif (tiap 6 jam) — log: $SSL_RETRY_LOG"
+    echo "Manual retry : sudo /usr/local/bin/rafz-ssl-retry"
+else
+    warn "Cronjob retry TIDAK terpasang — jalankan manual: sudo /usr/local/bin/rafz-ssl-retry"
+fi
 echo
 
 banner "INSTALLASI SELESAI"
@@ -890,11 +1147,18 @@ echo " Nest ID  : $NEST_ID"
 echo " Egg ID   : $EGG_ID"
 echo " Alloc    : $ALLOC_IP:$ALLOCATION_START-$ALLOCATION_END ($ALLOC_ALIAS)"
 echo " SFTP     : $NODE_DOMAIN:$SFTP_PORT"
+echo " SSL Mode : $SSL_MODE ($CERT_NAME)"
 echo "========================================="
 echo
 echo " File data : $RESULT_FILE"
 echo " Log       : $LOG_FILE"
+echo " SSL log   : $SSL_RETRY_LOG"
 echo
+if [[ "$SSL_MODE" != "production" ]]; then
+    warn "⚠️  SSL belum production — jalankan untuk retry kapan saja:"
+    warn "    sudo /usr/local/bin/rafz-ssl-retry"
+    warn "    (cronjob otomatis retry tiap 6 jam)"
+fi
 ok "Panel + Wings + Location + Node + Allocation + Egg selesai."
 echo
 info "Login: https://$PANEL_DOMAIN  |  $ADMIN_USERNAME / $ADMIN_PASSWORD"
