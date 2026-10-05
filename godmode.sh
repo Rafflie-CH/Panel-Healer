@@ -3,7 +3,7 @@
 # RAFZHOST - GOD MODE INSTALLER (FIXED & TESTED)
 # Panel + Wings + Location + Node + Allocation + Egg
 # =========================================================================
-# v3.4 — Perbaikan menyeluruh SSL (auto-handle rate limit + unified cert):
+# v3.5 — Perbaikan menyeluruh SSL (auto-handle rate limit + unified cert):
 #   1. UNIFIED SSL CERT: 1 cert Let's Encrypt untuk 2 domain (panel + node)
 #      dengan nama "rafzhost-ssl". Hemat kuota LE & Wings langsung pakai LE.
 #   2. RATE LIMIT HANDLER: deteksi error "too many certificates"/"rateLimit"
@@ -120,7 +120,7 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.4"
+banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.5"
 echo
 echo "----- STATUS SISTEM -----"
 echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
@@ -343,8 +343,13 @@ obtain_unified_cert() {
     ensure_acme_nginx_block "$d2"
     mkdir -p /var/www/html/.well-known/acme-challenge
 
+    # CRITICAL: nginx config dari panel installer sering pointing ke /etc/ssl/<domain>.pem
+    # yang BELUM ada → nginx -t gagal → certbot --nginx gagal. Buat placeholder dulu.
+    preflight_nginx_ssl_certs
+
     # ---- ATTEMPT 1: Production LE via nginx plugin ----
     info "Meminta cert Let's Encrypt (production) untuk: $d1, $d2"
+    rc=0
     out="$(certbot certonly --nginx -d "$d1" -d "$d2" \
         --non-interactive --agree-tos --register-unsafely-without-email \
         --keep-until-expiring --expand \
@@ -371,32 +376,45 @@ obtain_unified_cert() {
             warn "Cert STAGING didapat — panel & wings akan tampil 'Not Secure' sampai retry sukses."
             return 2
         fi
-        warn "Staging juga gagal — pakai self-signed sementara."
-        return 1
-    fi
-
-    # ---- Fallback: standalone (kalau plugin nginx error aneh) ----
-    if echo "$out" | grep -qiE "could not (find|install)|no.*virtual host|plugin.*nginx"; then
-        info "Plugin nginx bermasalah — fallback ke --standalone..."
+        # staging juga gagal → coba standalone staging lalu return 1
+        warn "Staging nginx plugin gagal — coba standalone staging..."
         systemctl stop nginx 2>/dev/null || true
         rc=0
         out="$(certbot certonly --standalone -d "$d1" -d "$d2" \
             --non-interactive --agree-tos --register-unsafely-without-email \
-            --keep-until-expiring --expand \
-            --cert-name "$CERT_NAME" 2>&1)" || rc=$?
+            --keep-until-expiring --expand --staging \
+            --cert-name "${CERT_NAME}-staging" 2>&1)" || rc=$?
         systemctl start nginx 2>/dev/null || true
-        if [[ $rc -eq 0 && -s "${CERT_LIVE}/fullchain.pem" ]]; then
-            ok "Cert LE production didapat via standalone."
-            return 0
+        if [[ $rc -eq 0 && -s "${CERT_STAGING_LIVE}/fullchain.pem" ]]; then
+            warn "Cert STAGING didapat via standalone."
+            return 2
         fi
-        if is_rate_limited "$out"; then
-            crit "Rate limit juga kena di standalone — pakai self-signed sementara."
-            return 1
-        fi
+        warn "Staging juga gagal — pakai self-signed sementara."
+        return 1
     fi
 
-    warn "Certbot gagal dengan error:"
-    echo "$out" | tail -5
+    # ---- Fallback: SELALU coba standalone kalau nginx plugin gagal (termasuk BIO_new_file / nginx -t) ----
+    warn "Certbot --nginx gagal (rc=$rc). Fallback ke --standalone..."
+    echo "$out" | tail -8 || true
+    systemctl stop nginx 2>/dev/null || true
+    sleep 1
+    rc=0
+    out="$(certbot certonly --standalone -d "$d1" -d "$d2" \
+        --non-interactive --agree-tos --register-unsafely-without-email \
+        --keep-until-expiring --expand \
+        --cert-name "$CERT_NAME" 2>&1)" || rc=$?
+    systemctl start nginx 2>/dev/null || true
+    if [[ $rc -eq 0 && -s "${CERT_LIVE}/fullchain.pem" ]]; then
+        ok "Cert LE production didapat via standalone."
+        return 0
+    fi
+    if is_rate_limited "$out"; then
+        crit "Rate limit juga kena di standalone — pakai self-signed sementara."
+        return 1
+    fi
+
+    warn "Certbot gagal total. Error terakhir:"
+    echo "$out" | tail -8 || true
     return 1
 }
 
@@ -408,13 +426,64 @@ make_selfsigned_cert() {
     if [[ ! -s "${base}.pem" ]]; then
         openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
             -keyout "${base}.key" -out "${base}.pem" \
-            -subj "/CN=${domain}" \
-            -addext "subjectAltName=DNS:${domain}" >/dev/null 2>&1 \
-            || error_exit 1 "Gagal generate self-signed untuk $domain"
+            -subj "/CN=${domain}" >/dev/null 2>&1 \
+            || { warn "openssl self-signed gagal untuk $domain"; return 1; }
     fi
     cp -f "${base}.pem" "/usr/local/share/ca-certificates/rafz-${domain}.crt" 2>/dev/null || true
     command -v update-ca-certificates >/dev/null 2>&1 && update-ca-certificates >/dev/null 2>&1 || true
 }
+
+# Pastikan semua path ssl_certificate di nginx ADA filenya (placeholder self-signed)
+# supaya nginx -t sukses sebelum certbot --nginx jalan.
+preflight_nginx_ssl_certs() {
+    local confs paths path dir domain base
+    confs=$(find /etc/nginx -type f \( -name '*.conf' -o -name '*pterodactyl*' \) 2>/dev/null || true)
+    [[ -z "$confs" ]] && return 0
+    paths=$(grep -hE '^\s*ssl_certificate\s+' $confs 2>/dev/null | awk '{print $2}' | tr -d ';' | sort -u || true)
+    for path in $paths; do
+        [[ -z "$path" || "$path" == *"letsencrypt"* ]] && continue
+        if [[ ! -s "$path" ]]; then
+            dir=$(dirname "$path")
+            mkdir -p "$dir"
+            domain=$(basename "$path" | sed -E 's/\.(pem|crt)$//')
+            base="/etc/ssl/.selfsigned-${domain}"
+            if [[ ! -s "${base}.pem" ]]; then
+                openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+                    -keyout "${base}.key" -out "${base}.pem" \
+                    -subj "/CN=${domain}" >/dev/null 2>&1 || true
+            fi
+            # copy placeholder ke path yang diminta nginx
+            [[ -s "${base}.pem" ]] && cp -f "${base}.pem" "$path"
+            # key pairing
+            local keypath
+            keypath=$(grep -hE "^\s*ssl_certificate_key\s+" $confs 2>/dev/null | awk '{print $2}' | tr -d ';' | grep -F "$domain" | head -1 || true)
+            if [[ -n "$keypath" && ! -s "$keypath" && -s "${base}.key" ]]; then
+                mkdir -p "$(dirname "$keypath")"
+                cp -f "${base}.key" "$keypath"
+            fi
+            # juga symlink standar
+            ln -sfn "${base}.pem" "/etc/ssl/${domain}.pem" 2>/dev/null || true
+            ln -sfn "${base}.key" "/etc/ssl/${domain}.key" 2>/dev/null || true
+            info "Placeholder cert dibuat: $path"
+        fi
+    done
+    # Pastikan path standar panel/node juga ada
+    for domain in ${PANEL_DOMAIN:-} ${NODE_DOMAIN:-}; do
+        [[ -z "$domain" ]] && continue
+        if [[ ! -s "/etc/ssl/${domain}.pem" ]]; then
+            make_selfsigned_cert "$domain" 2>/dev/null || {
+                openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+                    -keyout "/etc/ssl/.selfsigned-${domain}.key" \
+                    -out "/etc/ssl/.selfsigned-${domain}.pem" \
+                    -subj "/CN=${domain}" >/dev/null 2>&1 || true
+            }
+            ln -sfn "/etc/ssl/.selfsigned-${domain}.pem" "/etc/ssl/${domain}.pem" 2>/dev/null || true
+            ln -sfn "/etc/ssl/.selfsigned-${domain}.key" "/etc/ssl/${domain}.key" 2>/dev/null || true
+        fi
+    done
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+}
+
 
 # Tulis config untuk cronjob retry
 write_ssl_conf() {
@@ -516,8 +585,13 @@ ok "Cronjob terpasang (tepat 1 entri)."
 
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
+# Panel installer (ASSUME_SSL=true) sering bikin vhost HTTPS yang pointing ke
+# /etc/ssl/<domain>.pem yang belum ada → nginx -t gagal. Placeholder dulu.
+info "Preflight SSL placeholder setelah panel install..."
+preflight_nginx_ssl_certs || true
+
 # =========================================================================
-# 05c SSL UNIFIED (PANEL + NODE) — v3.4
+# 05c SSL UNIFIED (PANEL + NODE) — v3.5
 # =========================================================================
 STEP="05c SSL Unified"
 banner "[05c] Setup SSL UNIFIED (panel + node)"
