@@ -128,7 +128,7 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST GOD MODE INSTALLER v3.6"
+banner "RAFZHOST - GOD MODE INSTALLER v3.6"
 echo
 echo "----- STATUS SISTEM -----"
 echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
@@ -146,24 +146,19 @@ info "Isi data di bawah (tekan Enter untuk pakai nilai dalam kurung)."
 echo
 ask PANEL_DOMAIN "Domain Panel" "$PANEL_DOMAIN"
 ask NODE_DOMAIN "Domain Node" "$NODE_DOMAIN"
-ask SERVER_HOSTNAME "Hostname VPS (kosongkan = pakai sekarang)" "${SERVER_HOSTNAME:-}"
 ask ADMIN_EMAIL "Email Admin" "${ADMIN_EMAIL:-}"
 ask ADMIN_USERNAME "Username Admin" "${ADMIN_USERNAME:-admin}"
 ask ADMIN_FIRSTNAME "Nama Depan" "${ADMIN_FIRSTNAME:-Admin}"
 ask ADMIN_LASTNAME "Nama Belakang" "${ADMIN_LASTNAME:-Rafz}"
 ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
-echo
-info "--- Location (opsional) ---"
-# Short = kode singkat di panel (mis. JKT / SG / RafzHost)
-# Long  = nama panjang lokasi
-ask LOCATION_SHORT "Alias Location short (kode, kosong = RafzHost)" "${LOCATION_SHORT:-RafzHost}"
-ask LOCATION_LONG "Alias Location long (nama, kosong = RAFZHOST Indonesia)" "${LOCATION_LONG:-RAFZHOST Indonesia}"
-# Hanya alias allocation yang di-custom; IP = IP VPS, port = 2000-2999 (otomatis)
+# Alias allocation saja yang di-custom; IP=VPS, port=2000-2999, location & hostname auto
 ask ALLOC_ALIAS "Alias Allocation (kosong = nama node)" "${ALLOC_ALIAS:-}"
 
 [[ -n "$PANEL_DOMAIN" ]]   || error_exit 1 "Domain Panel tidak boleh kosong."
 [[ -n "$NODE_DOMAIN" ]]    || error_exit 1 "Domain Node tidak boleh kosong."
-[[ -n "$SERVER_HOSTNAME" ]] || error_exit 1 "Hostname VPS tidak boleh kosong."
+SERVER_HOSTNAME="${SERVER_HOSTNAME:-$(hostname 2>/dev/null || echo rafzhost)}"
+LOCATION_SHORT="${LOCATION_SHORT:-RafzHost}"
+LOCATION_LONG="${LOCATION_LONG:-RAFZHOST Indonesia}"
 [[ -n "$ADMIN_EMAIL" ]]    || error_exit 1 "Email Admin tidak boleh kosong."
 [[ -n "$ADMIN_USERNAME" ]] || error_exit 1 "Username Admin tidak boleh kosong."
 [[ -n "$ADMIN_PASSWORD" ]] || error_exit 1 "Password Admin tidak boleh kosong."
@@ -207,9 +202,9 @@ else
 fi
 
 LOCATION_SHORT="${LOCATION_SHORT:-RafzHost}"
-LOCATION_LONG="${LOCATION_LONG:-RAFZHOST Indonesia}"
-NODE_NAME="RAFZHOST"
-NODE_DESCRIPTION="RAFZHOST Pterodactyl Node Auto Installer"
+LOCATION_LONG="${LOCATION_LONG:-RAFZHOST}"
+NODE_NAME="RAFZHOST-NODE"
+NODE_DESCRIPTION="RAFZHOST Pterodactyl Node"
 ALLOCATION_START="2000"
 ALLOCATION_END="2999"
 DAEMON_PORT="8080"
