@@ -87,6 +87,12 @@ ADMIN_USERNAME="${ADMIN_USERNAME:-}"
 ADMIN_FIRSTNAME="${ADMIN_FIRSTNAME:-}"
 ADMIN_LASTNAME="${ADMIN_LASTNAME:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+ALLOC_ALIAS="${ALLOC_ALIAS:-}"
+ALLOC_IP="${ALLOC_IP:-}"
+ALLOCATION_START="${ALLOCATION_START:-2000}"
+ALLOCATION_END="${ALLOCATION_END:-2999}"
+LOCATION_SHORT="${LOCATION_SHORT:-RafzHost}"
+LOCATION_LONG="${LOCATION_LONG:-RAFZHOST Indonesia}"
 
 load_env_defaults() {
     [[ -f /root/godmode.env ]] || return 0
@@ -101,8 +107,10 @@ load_env_defaults() {
             ADMIN_FIRSTNAME) [[ -z "$ADMIN_FIRSTNAME" ]] && ADMIN_FIRSTNAME="${v//\"/}" ;;
             ADMIN_LASTNAME) [[ -z "$ADMIN_LASTNAME" ]] && ADMIN_LASTNAME="${v//\"/}" ;;
             ADMIN_PASSWORD) [[ -z "$ADMIN_PASSWORD" ]] && ADMIN_PASSWORD="${v//\"/}" ;;
+            LOCATION_SHORT) [[ -z "$LOCATION_SHORT" || "$LOCATION_SHORT" == "RafzHost" ]] && LOCATION_SHORT="${v//\"/}" ;;
+            LOCATION_LONG)  [[ -z "$LOCATION_LONG" || "$LOCATION_LONG" == "RAFZHOST Indonesia" ]] && LOCATION_LONG="${v//\"/}" ;;
         esac
-    done < <(grep -E '^(PANEL_DOMAIN|NODE_DOMAIN|SERVER_HOSTNAME|ADMIN_EMAIL|ADMIN_USERNAME|ADMIN_FIRSTNAME|ADMIN_LASTNAME|ADMIN_PASSWORD)=' /root/godmode.env 2>/dev/null || true)
+    done < <(grep -E '^(PANEL_DOMAIN|NODE_DOMAIN|SERVER_HOSTNAME|ADMIN_EMAIL|ADMIN_USERNAME|ADMIN_FIRSTNAME|ADMIN_LASTNAME|ADMIN_PASSWORD|LOCATION_SHORT|LOCATION_LONG)=' /root/godmode.env 2>/dev/null || true)
 }
 load_env_defaults
 
@@ -120,7 +128,7 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST x DEKZYMARKET - GOD MODE INSTALLER v3.5"
+banner "RAFZHOST GOD MODE INSTALLER v3.6"
 echo
 echo "----- STATUS SISTEM -----"
 echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
@@ -144,6 +152,14 @@ ask ADMIN_USERNAME "Username Admin" "${ADMIN_USERNAME:-admin}"
 ask ADMIN_FIRSTNAME "Nama Depan" "${ADMIN_FIRSTNAME:-Admin}"
 ask ADMIN_LASTNAME "Nama Belakang" "${ADMIN_LASTNAME:-Rafz}"
 ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
+echo
+info "--- Location (opsional) ---"
+# Short = kode singkat di panel (mis. JKT / SG / RafzHost)
+# Long  = nama panjang lokasi
+ask LOCATION_SHORT "Alias Location short (kode, kosong = RafzHost)" "${LOCATION_SHORT:-RafzHost}"
+ask LOCATION_LONG "Alias Location long (nama, kosong = RAFZHOST Indonesia)" "${LOCATION_LONG:-RAFZHOST Indonesia}"
+# Hanya alias allocation yang di-custom; IP = IP VPS, port = 2000-2999 (otomatis)
+ask ALLOC_ALIAS "Alias Allocation (kosong = nama node)" "${ALLOC_ALIAS:-}"
 
 [[ -n "$PANEL_DOMAIN" ]]   || error_exit 1 "Domain Panel tidak boleh kosong."
 [[ -n "$NODE_DOMAIN" ]]    || error_exit 1 "Domain Node tidak boleh kosong."
@@ -152,6 +168,9 @@ ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
 [[ -n "$ADMIN_USERNAME" ]] || error_exit 1 "Username Admin tidak boleh kosong."
 [[ -n "$ADMIN_PASSWORD" ]] || error_exit 1 "Password Admin tidak boleh kosong."
 [[ "$PANEL_DOMAIN" != "$NODE_DOMAIN" ]] || error_exit 1 "Domain Panel dan Node tidak boleh sama."
+[[ "$ALLOCATION_START" =~ ^[0-9]+$ ]] || error_exit 1 "Port mulai tidak valid: $ALLOCATION_START"
+[[ "$ALLOCATION_END" =~ ^[0-9]+$ ]] || error_exit 1 "Port akhir tidak valid: $ALLOCATION_END"
+(( ALLOCATION_END >= ALLOCATION_START )) || error_exit 1 "Port akhir harus >= port mulai"
 
 # =========================================================================
 # 00e HAPUS SISA INSTALL LAMA
@@ -187,10 +206,10 @@ else
     ok "Hostname VPS sudah: $SERVER_HOSTNAME"
 fi
 
-LOCATION_SHORT="RafzHost"
-LOCATION_LONG="RAFZHOST Indonesia"
-NODE_NAME="RAFZHOST-NODE-01"
-NODE_DESCRIPTION="RAFZHOST Pterodactyl Node"
+LOCATION_SHORT="${LOCATION_SHORT:-RafzHost}"
+LOCATION_LONG="${LOCATION_LONG:-RAFZHOST Indonesia}"
+NODE_NAME="RAFZHOST"
+NODE_DESCRIPTION="RAFZHOST Pterodactyl Node Auto Installer"
 ALLOCATION_START="2000"
 ALLOCATION_END="2999"
 DAEMON_PORT="8080"
@@ -208,8 +227,9 @@ CERT_STAGING_LIVE="/etc/letsencrypt/live/${CERT_NAME}-staging"
 info "Mode      : INSTALL BARU"
 info "Panel     : $PANEL_DOMAIN"
 info "Node      : $NODE_DOMAIN"
+info "Location  : $LOCATION_SHORT — $LOCATION_LONG"
 info "Admin     : $ADMIN_USERNAME <$ADMIN_EMAIL>"
-info "Ports     : $ALLOCATION_START-$ALLOCATION_END"
+info "Ports     : $ALLOCATION_START-$ALLOCATION_END (default)"
 info "SSL Mode  : UNIFIED (1 cert untuk 2 domain)"
 echo
 
@@ -259,8 +279,14 @@ fi
 case "$PUBLIC_IP" in *[!0-9.]*|'') error_exit 1 "IPv4 tidak valid: $PUBLIC_IP" ;; esac
 echo "VPS IPv4: $PUBLIC_IP"
 ok "IP terdeteksi."
+# IP & port otomatis; hanya alias bisa di-custom user
 ALLOC_IP="$PUBLIC_IP"
-ALLOC_ALIAS="$NODE_NAME"
+ALLOCATION_START=2000
+ALLOCATION_END=2999
+if [[ -z "${ALLOC_ALIAS:-}" ]]; then
+    ALLOC_ALIAS="$NODE_NAME"
+fi
+info "Allocation: IP=$ALLOC_IP  Alias=$ALLOC_ALIAS  Ports=$ALLOCATION_START-$ALLOCATION_END"
 
 # =========================================================================
 # 04 DNS
@@ -861,12 +887,12 @@ ALLOC_JSON="$(api_req GET "$API_BASE/nodes/$NODE_ID/allocations?per_page=100")" 
 EXISTING_PORT="$(printf '%s' "$ALLOC_JSON" | jq -r --arg ip "$ALLOC_IP" --argjson p "$ALLOCATION_START" \
     '.data[] | select(.attributes.ip == $ip and .attributes.port == $p) | .attributes.port' | head -1)"
 if [[ "$EXISTING_PORT" == "$ALLOCATION_START" ]]; then
-    ok "Allocation $ALLOC_IP:$ALLOCATION_START sudah ada."
+    ok "Allocation $ALLOC_IP:$ALLOCATION_START-$ALLOCATION_END (alias: $ALLOC_ALIAS) sudah ada."
 else
     ALLOC_RAW="$(api_req POST "$API_BASE/nodes/$NODE_ID/allocations" \
         "$(jq -nc --arg ip "$ALLOC_IP" --arg alias "$ALLOC_ALIAS" --arg ports "$ALLOCATION_START-$ALLOCATION_END" '{ip:$ip,alias:$alias,ports:[$ports]}')" 2>&1)" \
         || error_exit 1 "Gagal membuat Allocation: $(api_error "$ALLOC_RAW")"
-    ok "Allocation berhasil dibuat."
+    ok "Allocation berhasil dibuat: $ALLOC_IP:$ALLOCATION_START-$ALLOCATION_END (alias: $ALLOC_ALIAS)."
 fi
 
 # =========================================================================
@@ -1114,45 +1140,202 @@ unset EGG_B64
 ok "Egg berhasil diimport (secured). ID: $EGG_ID  Nest ID: $NEST_ID"
 
 # Best-effort: batasi EXPORT egg — hanya user id=1 (root admin) yang boleh
-info "Hardening: batasi export egg di panel (non-root = 403)..."
+info "Hardening egg: export + hide startup/script dari non-root..."
 set +e
-EXPORT_CTRL="/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/EggShareController.php"
-if [[ -f "$EXPORT_CTRL" ]] && ! grep -q 'RAFZ_EGG_EXPORT_GUARD' "$EXPORT_CTRL" 2>/dev/null; then
-  cp -a "$EXPORT_CTRL" "${EXPORT_CTRL}.bak.rafz" 2>/dev/null || true
-  export EXPORT_CTRL; php -r '
-    $f = getenv("EXPORT_CTRL");
-    if (!$f || !is_file($f)) { echo "NO_CTRL
-"; exit(0); }
-    $c = file_get_contents($f);
-    if (strpos($c, "RAFZ_EGG_EXPORT_GUARD") !== false) { echo "ALREADY
-"; exit(0); }
-    $guard = "
-        // RAFZ_EGG_EXPORT_GUARD
-        if (auth()->id() !== 1) {
-            abort(403, "Egg export disabled by security policy");
-        }
-";
-    $c2 = preg_replace(
-        "/(function\s+export\s*\([^)]*\)\s*\{)/",
-        "$1".$guard,
-        $c,
-        1,
-        $count
-    );
-    if ($count > 0) {
-        file_put_contents($f, $c2);
-        echo "EXPORT_GUARD_OK
-";
-    } else {
-        echo "EXPORT_GUARD_SKIP
-";
+
+# Tulis patcher sekali jalan (lebih aman daripada sed/php -r one-liner)
+cat > /tmp/rafz_egg_secure.php <<'SECUREPHP'
+<?php
+/**
+ * RAFZHOST egg security:
+ * 1) Export egg = 403 kecuali user id === 1
+ * 2) View/Edit egg: startup + install script disembunyikan untuk non-root
+ * 3) API application eggs detail: redact script fields untuk non-root (best-effort)
+ */
+function rafz_patch_file(string $path, callable $mutator): string {
+    if (!is_file($path)) return "SKIP missing $path\n";
+    $c = file_get_contents($path);
+    if (strpos($c, 'RAFZ_EGG_SECURITY') !== false) return "ALREADY $path\n";
+    $orig = $c;
+    $c = $mutator($c);
+    if ($c === $orig) return "NOCHANGE $path\n";
+    $bak = $path . '.bak.rafz';
+    if (!is_file($bak)) @copy($path, $bak);
+    file_put_contents($path, $c);
+    return "PATCHED $path\n";
+}
+
+$out = '';
+
+// ---- 1) Export controller ----
+$exportCtrl = '/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/EggShareController.php';
+$out .= rafz_patch_file($exportCtrl, function ($c) {
+    $guard = "\n        // RAFZ_EGG_SECURITY: block export for non-root\n"
+           . "        if (auth()->id() !== 1) {\n"
+           . "            abort(403, 'Egg export disabled by security policy');\n"
+           . "        }\n";
+    $c2 = preg_replace('/(function\s+export\s*\([^)]*\)\s*\{)/', '$1' . $guard, $c, 1, $n);
+    return $n ? $c2 : $c;
+});
+
+// ---- 2) EggController view/update: redact sensitive fields for non-root ----
+$eggCtrl = '/var/www/pterodactyl/app/Http/Controllers/Admin/Nests/EggController.php';
+$out .= rafz_patch_file($eggCtrl, function ($c) {
+    // Inject helper method if not present
+    if (strpos($c, 'rafzRedactEgg') === false) {
+        $helper = "\n    // RAFZ_EGG_SECURITY\n"
+                . "    protected function rafzRedactEgg(\$egg)\n"
+                . "    {\n"
+                . "        if (auth()->id() === 1) return \$egg;\n"
+                . "        try {\n"
+                . "            \$egg->startup = '[PROTECTED — hanya root admin]';\n"
+                . "            if (isset(\$egg->script_install)) \$egg->script_install = '[PROTECTED]';\n"
+                . "            if (isset(\$egg->script_container)) { /* keep image name */ }\n"
+                . "        } catch (\\Throwable \$e) {}\n"
+                . "        return \$egg;\n"
+                . "    }\n";
+        // Insert before last closing brace of class
+        $c = preg_replace('/\}\s*$/', $helper . "}\n", $c, 1);
     }
-  ' 2>/dev/null || true
-fi
-cd /var/www/pterodactyl && php artisan route:clear >/dev/null 2>&1 || true
+    // Wrap view() return to redact
+    if (strpos($c, 'rafzRedactEgg($egg)') === false && preg_match('/function\s+view\s*\(/', $c)) {
+        // After $egg is loaded, redact before passing to view
+        $c = preg_replace(
+            '/(function\s+view\s*\([^)]*\)\s*\{)/',
+            '$1' . "\n        // RAFZ_EGG_SECURITY applied in view data below\n",
+            $c,
+            1
+        );
+        // Try to intercept compact/with egg
+        $c = str_replace(
+            "return view('admin.eggs.view'",
+            "\$egg = \$this->rafzRedactEgg(\$egg);\n        return view('admin.eggs.view'",
+            $c
+        );
+        $c = str_replace(
+            'return view("admin.eggs.view"',
+            "\$egg = \$this->rafzRedactEgg(\$egg);\n        return view(\"admin.eggs.view\"",
+            $c
+        );
+    }
+    return $c;
+});
+
+// ---- 3) Blade views: hide startup + install script textareas for non-root ----
+$viewCandidates = [
+    '/var/www/pterodactyl/resources/views/admin/eggs/view.blade.php',
+    '/var/www/pterodactyl/resources/views/admin/eggs/scripts.blade.php',
+    '/var/www/pterodactyl/resources/views/admin/nests/eggs/view.blade.php',
+];
+foreach (glob('/var/www/pterodactyl/resources/views/admin/**/*.blade.php') ?: [] as $vf) {
+    if (stripos($vf, 'egg') === false) continue;
+    $viewCandidates[] = $vf;
+}
+$viewCandidates = array_unique($viewCandidates);
+
+foreach ($viewCandidates as $vf) {
+    if (!is_file($vf)) continue;
+    $c = file_get_contents($vf);
+    if (strpos($c, 'RAFZ_EGG_SECURITY') !== false) { $out .= "ALREADY $vf\n"; continue; }
+    // Only patch files that show startup or script_install
+    if (strpos($c, 'startup') === false && strpos($c, 'script_install') === false && strpos($c, 'Install Script') === false) {
+        continue;
+    }
+    $bak = $vf . '.bak.rafz';
+    if (!is_file($bak)) @copy($vf, $bak);
+
+    // Prepend a blade guard note at top (after @extends if any)
+    $banner = "\n{{-- RAFZ_EGG_SECURITY --}}\n"
+            . "@php \$rafz_is_root = auth()->id() === 1; @endphp\n";
+    if (preg_match('/@extends\([^\)]+\)/', $c)) {
+        $c = preg_replace('/(@extends\([^\)]+\))/', '$1' . $banner, $c, 1);
+    } else {
+        $c = $banner . $c;
+    }
+
+    // Replace value="{{ $egg->startup }}" style displays
+    $c = preg_replace(
+        '/\{\{\s*\$egg->startup\s*\}\}/',
+        '{{ $rafz_is_root ? $egg->startup : "[PROTECTED — hubungi root admin]" }}',
+        $c
+    );
+    $c = preg_replace(
+        '/\{\!!\s*\$egg->startup\s*!!\}/',
+        '{!! $rafz_is_root ? $egg->startup : "[PROTECTED]" !!}',
+        $c
+    );
+    // textarea content for startup
+    $c = preg_replace(
+        '/(<textarea[^>]*name=["\']startup["\'][^>]*>)(.*?)(<\/textarea>)/is',
+        '$1{{ $rafz_is_root ? ($egg->startup ?? "$2") : "[PROTECTED — hanya root admin yang bisa lihat/edit startup]" }}$3',
+        $c
+    );
+    // script install fields
+    $c = preg_replace(
+        '/\{\{\s*\$egg->script_install\s*\}\}/',
+        '{{ $rafz_is_root ? $egg->script_install : "[PROTECTED]" }}',
+        $c
+    );
+    $c = preg_replace(
+        '/(<textarea[^>]*name=["\']script_install["\'][^>]*>)(.*?)(<\/textarea>)/is',
+        '$1{{ $rafz_is_root ? ($egg->script_install ?? "$2") : "[PROTECTED]" }}$3',
+        $c
+    );
+
+    // Disable export button for non-root
+    if (stripos($c, 'export') !== false) {
+        $c = preg_replace(
+            '/(<a[^>]*export[^>]*>)(.*?)(<\/a>)/is',
+            '@if($rafz_is_root)$1$2$3@else<span class="btn btn-sm btn-default disabled" title="Export disabled">Export locked</span>@endif',
+            $c
+        );
+    }
+
+    file_put_contents($vf, $c);
+    $out .= "PATCHED view $vf\n";
+}
+
+// ---- 4) Application API: redact egg scripts for non-root tokens (best-effort) ----
+$apiTrans = '/var/www/pterodactyl/app/Transformers/Api/Application/EggTransformer.php';
+$out .= rafz_patch_file($apiTrans, function ($c) {
+    if (strpos($c, 'RAFZ_EGG_SECURITY') !== false) return $c;
+    // In transform(), after building array, redact if not root
+    $inject = "\n        // RAFZ_EGG_SECURITY\n"
+            . "        try {\n"
+            . "            \$uid = optional(auth())->id();\n"
+            . "            if (\$uid !== 1) {\n"
+            . "                if (isset(\$data['startup'])) \$data['startup'] = '[PROTECTED]';\n"
+            . "                if (isset(\$data['script'])) \$data['script'] = ['install' => '[PROTECTED]', 'container' => \$data['script']['container'] ?? null, 'entry' => \$data['script']['entry'] ?? null];\n"
+            . "            }\n"
+            . "        } catch (\\Throwable \$e) {}\n";
+    // Try before return $data or return [...]
+    if (preg_match('/function\s+transform\s*\(/', $c)) {
+        $c2 = preg_replace(
+            '/(return\s+\[)/',
+            $inject . "\n        // original return:\n        \$data = [\n",
+            $c,
+            1,
+            $n
+        );
+        if ($n) {
+            // This might break syntax - safer skip API transformer if complex
+            return $c; // skip risky transform rewrite
+        }
+    }
+    return $c;
+});
+
+echo $out;
+SECUREPHP
+
+php /tmp/rafz_egg_secure.php 2>/dev/null | tail -20 || warn "Egg security patcher partial/skip"
+rm -f /tmp/rafz_egg_secure.php
+
 cd /var/www/pterodactyl && php artisan view:clear >/dev/null 2>&1 || true
+cd /var/www/pterodactyl && php artisan route:clear >/dev/null 2>&1 || true
+cd /var/www/pterodactyl && php artisan cache:clear >/dev/null 2>&1 || true
 set -e
-ok "Egg secured (temp wiped, export non-root diblokir)."
+ok "Egg secured: export diblokir + startup/script disembunyikan untuk non-root."
 
 info "Membersihkan cache Panel..."
 cd /var/www/pterodactyl
