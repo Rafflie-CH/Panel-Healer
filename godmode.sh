@@ -68,18 +68,15 @@ _dline() { echo -e "${CYAN}═════════════════�
 
 banner() {
     spin_stop 2>/dev/null || true
+    status_clear 2>/dev/null || true
     echo
     _dline
     echo -e "  ${CYAN}${C_BOLD}$1${NC}"
     _dline
     echo
-    # Auto spinner di bawah untuk step [xx]
-    if [[ "$1" =~ ^\[[0-9] ]]; then
-        spin_start "$1"
-    fi
 }
 
-ok()   { spin_stop 2>/dev/null || true; echo -e "  ${GREEN}[✓]${NC} $1"; }
+ok()   { spin_stop 2>/dev/null || true; status_clear 2>/dev/null || true; echo -e "  ${GREEN}[✓]${NC} $1"; }
 info() { echo -e "  ${BLUE}[*]${NC} $1"; }
 warn() { spin_stop 2>/dev/null || true; echo -e "  ${YELLOW}[!]${NC} $1"; }
 crit() { spin_stop 2>/dev/null || true; echo -e "  ${RED}[‼]${NC} $1"; }
@@ -96,49 +93,51 @@ status_row() {
     printf "  ${WHITE}%-10s${NC} ${col}%s${NC}\n" "$lab" "$val"
 }
 
-# ── Spinner sticky (tulis ke /dev/tty biar nempel di terminal) ──
+# ── Status line (1 baris, tidak spam) ──
+# Mobile SSH sering rusak \r spinner → jangan loop di background saat apt/docker.
+# Pakai status_set sekali; status_clear sebelum output panjang.
+_STATUS_TTY="/dev/tty"
+[[ -w /dev/tty ]] || _STATUS_TTY="/dev/stderr"
+
+status_set() {
+    # Satu baris status di TTY (overwrite), tidak background loop
+    local msg="$1"
+    printf "\r\033[K${CYAN}⋯${NC} ${WHITE}%s${NC} ${DARK}…${NC}" "$msg" >"$_STATUS_TTY" 2>/dev/null || true
+}
+
+status_clear() {
+    printf "\r\033[K" >"$_STATUS_TTY" 2>/dev/null || true
+}
+
+# Kompat nama lama (spin_*) → status tanpa spam
 _SPIN_PID=""
-_SPIN_TTY="/dev/tty"
-[[ -w /dev/tty ]] || _SPIN_TTY="/dev/stderr"
-
-spin_start() {
-    local msg="${1:-Working...}"
-    spin_stop 2>/dev/null || true
-    (
-        local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-        local i=0
-        # sembunyikan kursor
-        printf '\033[?25l' >"$_SPIN_TTY" 2>/dev/null || true
-        while true; do
-            printf "\r${CYAN}%s${NC} ${WHITE}%s${NC}${DARK} ...${NC}   " "${frames[i]}" "$msg" >"$_SPIN_TTY" 2>/dev/null || true
-            i=$(( (i + 1) % ${#frames[@]} ))
-            sleep 0.12
-        done
-    ) &
-    _SPIN_PID=$!
-    disown "$_SPIN_PID" 2>/dev/null || true
-}
-
-spin_stop() {
-    if [[ -n "${_SPIN_PID:-}" ]] && kill -0 "$_SPIN_PID" 2>/dev/null; then
-        kill "$_SPIN_PID" 2>/dev/null || true
-        wait "$_SPIN_PID" 2>/dev/null || true
-    fi
-    _SPIN_PID=""
-    # clear line + show cursor
-    printf "\r\033[K\033[?25h" >"$_SPIN_TTY" 2>/dev/null || true
-}
-
-# spin_run "pesan" command...
+spin_start() { status_set "${1:-Working}"; }
+spin_stop()  { status_clear; _SPIN_PID=""; }
 spin_run() {
     local msg="$1"; shift
-    spin_start "$msg"
+    status_set "$msg"
     set +e
-    "$@"
+    "$@" >/dev/null 2>&1
     local rc=$?
     set -e
-    spin_stop
+    status_clear
     return $rc
+}
+
+# Spinner HALUS hanya untuk loop tunggu (sleep), max 1 update / 0.5dtk, di baris yang sama
+wait_spin() {
+    # wait_spin "pesan" SECONDS
+    local msg="$1" secs="${2:-5}"
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local i=0 end=$((SECONDS + secs))
+    printf '\033[?25l' >"$_STATUS_TTY" 2>/dev/null || true
+    while (( SECONDS < end )); do
+        printf "\r\033[K${CYAN}%s${NC} ${WHITE}%s${NC} ${DARK}(%ss)${NC}" \
+            "${frames[i]}" "$msg" "$((end - SECONDS))" >"$_STATUS_TTY" 2>/dev/null || true
+        i=$(( (i + 1) % ${#frames[@]} ))
+        sleep 0.2
+    done
+    printf "\r\033[K\033[?25h" >"$_STATUS_TTY" 2>/dev/null || true
 }
 
 STEP="Inisialisasi"
@@ -1748,8 +1747,10 @@ VOLUME_DIR="/var/lib/pterodactyl/volumes/${BOT_SERVER_UUID}"
 info "Menunggu volume server siap..."
 for _i in $(seq 1 60); do
     [[ -d "$VOLUME_DIR" ]] && break
+    status_set "Menunggu volume server ($_i/60)"
     sleep 2
 done
+status_clear
 [[ -d "$VOLUME_DIR" ]] || error_exit 1 "Volume server tidak ditemukan: $VOLUME_DIR"
 ok "Volume: $VOLUME_DIR"
 
