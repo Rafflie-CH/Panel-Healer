@@ -41,73 +41,127 @@ SSL_RETRY_LOG="/var/log/rafzhost-ssl-retry.log"
 mkdir -p "$WORK_DIR"
 touch "$LOG_FILE"
 chmod 600 "$LOG_FILE"
+
+# ============================================================
+# Palette warna (sama pola healer.sh — SELALU aktif)
+# ============================================================
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+PURPLE='\033[1;35m'
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+DARK='\033[0;90m'
+NC='\033[0m'
+
+# Alias kompat
+C_RESET="$NC"; C_BOLD='\033[1m'; C_DIM="$DARK"
+C_RED="$RED"; C_GRN="$GREEN"; C_YLW="$YELLOW"; C_BLU="$BLUE"
+C_MAG="$PURPLE"; C_CYN="$CYAN"; C_WHT="$WHITE"; C_GRY="$DARK"
+
+# Output ke log + terminal (warna tetap ke TTY via /dev/tty untuk spinner)
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-# ── Warna (auto-off kalau bukan TTY / NO_COLOR) ──
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    C_RESET='\033[0m'
-    C_BOLD='\033[1m'
-    C_DIM='\033[2m'
-    C_RED='\033[1;31m'
-    C_GRN='\033[1;32m'
-    C_YLW='\033[1;33m'
-    C_BLU='\033[1;34m'
-    C_MAG='\033[1;35m'
-    C_CYN='\033[1;36m'
-    C_WHT='\033[1;37m'
-    C_GRY='\033[0;90m'
-else
-    C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GRN=''; C_YLW=''
-    C_BLU=''; C_MAG=''; C_CYN=''; C_WHT=''; C_GRY=''
-fi
-
-_line() { printf "${C_GRY}%s${C_RESET}\n" "────────────────────────────────────────────────────────────"; }
-_dline(){ printf "${C_CYN}%s${C_RESET}\n" "════════════════════════════════════════════════════════════"; }
+_line()  { echo -e "${DARK}────────────────────────────────────────────────────────────${NC}"; }
+_dline() { echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"; }
 
 banner() {
+    spin_stop 2>/dev/null || true
     echo
     _dline
-    printf "  ${C_BOLD}${C_CYN}%-56s${C_RESET}\n" "$1"
+    echo -e "  ${CYAN}${C_BOLD}$1${NC}"
     _dline
     echo
+    # Auto spinner di bawah untuk step [xx]
+    if [[ "$1" =~ ^\[[0-9] ]]; then
+        spin_start "$1"
+    fi
 }
 
-ok()   { printf "  ${C_GRN}[✓]${C_RESET} %s\n" "$1"; }
-info() { printf "  ${C_BLU}[*]${C_RESET} %s\n" "$1"; }
-warn() { printf "  ${C_YLW}[!]${C_RESET} %s\n" "$1"; }
-crit() { printf "  ${C_RED}[‼]${C_RESET} %s\n" "$1"; }
+ok()   { spin_stop 2>/dev/null || true; echo -e "  ${GREEN}[✓]${NC} $1"; }
+info() { echo -e "  ${BLUE}[*]${NC} $1"; }
+warn() { spin_stop 2>/dev/null || true; echo -e "  ${YELLOW}[!]${NC} $1"; }
+crit() { spin_stop 2>/dev/null || true; echo -e "  ${RED}[‼]${NC} $1"; }
 
 status_row() {
-    # status_row "Label" "value" "ok|warn|bad|dim"
     local lab="$1" val="$2" kind="${3:-dim}"
-    local col="$C_GRY"
+    local col="$DARK"
     case "$kind" in
-        ok)   col="$C_GRN" ;;
-        warn) col="$C_YLW" ;;
-        bad)  col="$C_RED" ;;
-        info) col="$C_CYN" ;;
+        ok)   col="$GREEN" ;;
+        warn) col="$YELLOW" ;;
+        bad)  col="$RED" ;;
+        info) col="$CYAN" ;;
     esac
-    printf "  ${C_WHT}%-10s${C_RESET} ${col}%s${C_RESET}\n" "$lab" "$val"
+    printf "  ${WHITE}%-10s${NC} ${col}%s${NC}\n" "$lab" "$val"
+}
+
+# ── Spinner sticky (tulis ke /dev/tty biar nempel di terminal) ──
+_SPIN_PID=""
+_SPIN_TTY="/dev/tty"
+[[ -w /dev/tty ]] || _SPIN_TTY="/dev/stderr"
+
+spin_start() {
+    local msg="${1:-Working...}"
+    spin_stop 2>/dev/null || true
+    (
+        local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        local i=0
+        # sembunyikan kursor
+        printf '\033[?25l' >"$_SPIN_TTY" 2>/dev/null || true
+        while true; do
+            printf "\r${CYAN}%s${NC} ${WHITE}%s${NC}${DARK} ...${NC}   " "${frames[i]}" "$msg" >"$_SPIN_TTY" 2>/dev/null || true
+            i=$(( (i + 1) % ${#frames[@]} ))
+            sleep 0.12
+        done
+    ) &
+    _SPIN_PID=$!
+    disown "$_SPIN_PID" 2>/dev/null || true
+}
+
+spin_stop() {
+    if [[ -n "${_SPIN_PID:-}" ]] && kill -0 "$_SPIN_PID" 2>/dev/null; then
+        kill "$_SPIN_PID" 2>/dev/null || true
+        wait "$_SPIN_PID" 2>/dev/null || true
+    fi
+    _SPIN_PID=""
+    # clear line + show cursor
+    printf "\r\033[K\033[?25h" >"$_SPIN_TTY" 2>/dev/null || true
+}
+
+# spin_run "pesan" command...
+spin_run() {
+    local msg="$1"; shift
+    spin_start "$msg"
+    set +e
+    "$@"
+    local rc=$?
+    set -e
+    spin_stop
+    return $rc
 }
 
 STEP="Inisialisasi"
 error_exit() {
     local rc=${1:-1} msg="${2:-Unknown error}"
+    spin_stop 2>/dev/null || true
     echo
     _dline
-    printf "  ${C_RED}${C_BOLD}INSTALLER GAGAL${C_RESET}\n"
+    echo -e "  ${RED}${C_BOLD}INSTALLER GAGAL${NC}"
     _dline
-    printf "  ${C_WHT}Step${C_RESET}       : ${C_YLW}%s${C_RESET}\n" "${STEP:-Tidak diketahui}"
-    printf "  ${C_WHT}Exit code${C_RESET}  : ${C_RED}%s${C_RESET}\n" "$rc"
-    printf "  ${C_WHT}Pesan${C_RESET}      : %s\n" "$msg"
-    printf "  ${C_WHT}Log${C_RESET}        : ${C_DIM}%s${C_RESET}\n" "$LOG_FILE"
+    echo -e "  ${WHITE}Step${NC}       : ${YELLOW}${STEP:-Tidak diketahui}${NC}"
+    echo -e "  ${WHITE}Exit code${NC}  : ${RED}${rc}${NC}"
+    echo -e "  ${WHITE}Pesan${NC}      : ${msg}"
+    echo -e "  ${WHITE}Log${NC}        : ${DARK}${LOG_FILE}${NC}"
     echo
-    printf "  ${C_GRY}── 25 baris terakhir log ──${C_RESET}\n"
+    echo -e "  ${DARK}── 25 baris terakhir log ──${NC}"
     tail -25 "$LOG_FILE" 2>/dev/null | sed 's/^/  /' || true
     _dline
     exit "$rc"
 }
-trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
+
+trap 'spin_stop 2>/dev/null || true' EXIT
+trap 'spin_stop 2>/dev/null || true; rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
 
 # =========================================================================
 # 00b INPUT INTERAKTIF
@@ -123,12 +177,12 @@ ask() {
     fi
     if [[ -n "$__def" ]]; then
         if [[ "$__secret" == "1" ]]; then
-            printf "  ${C_CYN}?${C_RESET} ${C_WHT}%s${C_RESET} ${C_GRY}[****]${C_RESET}: " "$__prompt"
+            echo -ne "  ${CYAN}?${NC} ${WHITE}${__prompt}${NC} ${DARK}[****]${NC}: "
         else
-            printf "  ${C_CYN}?${C_RESET} ${C_WHT}%s${C_RESET} ${C_GRY}[%s]${C_RESET}: " "$__prompt" "$__def"
+            echo -ne "  ${CYAN}?${NC} ${WHITE}${__prompt}${NC} ${DARK}[${__def}]${NC}: "
         fi
     else
-        printf "  ${C_CYN}?${C_RESET} ${C_WHT}%s${C_RESET}: " "$__prompt"
+        echo -ne "  ${CYAN}?${NC} ${WHITE}${__prompt}${NC}: "
     fi
     if ! read -r __val 2>/dev/null < /dev/tty; then
         if ! read -r __val 2>/dev/null; then __val=""; fi
@@ -189,14 +243,14 @@ WINGS_CONFIG=0
 # Header
 echo
 _dline
-printf "  ${C_BOLD}${C_MAG}RAFZHOST${C_RESET} ${C_GRY}x${C_RESET} ${C_BOLD}${C_CYN}DEKZYMARKET${C_RESET}\n"
-printf "  ${C_WHT}GOD MODE INSTALLER${C_RESET}  ${C_GRY}v3.9${C_RESET}\n"
-printf "  ${C_DIM}Panel · Wings · Egg · CPanel Bot · SSL Unified${C_RESET}\n"
+echo -e "  ${PURPLE}${C_BOLD}RAFZHOST${NC} ${DARK}x${NC} ${CYAN}${C_BOLD}DEKZYMARKET${NC}"
+echo -e "  ${WHITE}${C_BOLD}GOD MODE INSTALLER${NC}  ${DARK}v3.9${NC}"
+echo -e "  ${DARK}Panel · Wings · Egg · CPanel Bot · SSL Unified${NC}"
 _dline
 echo
 
 # Status box
-printf "  ${C_BOLD}${C_WHT}STATUS SISTEM${C_RESET}\n"
+echo -e "  ${WHITE}${C_BOLD}STATUS SISTEM${NC}"
 _line
 if [[ $PANEL_INSTALLED -eq 1 ]]; then
     status_row "Panel" "SUDAH TERPASANG" ok
@@ -223,14 +277,14 @@ echo
 # =========================================================================
 GODMODE_ACTION="${GODMODE_ACTION:-}"
 if [[ -z "$GODMODE_ACTION" && "${NONINTERACTIVE:-0}" != "1" ]]; then
-    printf "  ${C_BOLD}${C_WHT}MENU${C_RESET}\n"
+    echo -e "  ${WHITE}${C_BOLD}MENU${NC}"
     _line
-    printf "  ${C_GRN}[1]${C_RESET}  Install Panel + Wings + Egg ${C_GRY}(God Mode)${C_RESET}\n"
+    echo -e "  ${GREEN}[1]${NC}  Install Panel + Wings + Egg ${DARK}(God Mode)${NC}"
     echo
-    printf "  ${C_YLW}[2]${C_RESET}  Uninstall — Reset VPS ${C_GRY}(Deep Clean total)${C_RESET}\n"
-    printf "  ${C_YLW}[3]${C_RESET}  Uninstall Panel saja\n"
-    printf "  ${C_YLW}[4]${C_RESET}  Uninstall Wings / Node saja\n"
-    printf "  ${C_YLW}[5]${C_RESET}  Uninstall Panel + Wings\n"
+    echo -e "  ${YELLOW}[2]${NC}  Uninstall — Reset VPS ${DARK}(Deep Clean total)${NC}"
+    echo -e "  ${YELLOW}[3]${NC}  Uninstall Panel saja"
+    echo -e "  ${YELLOW}[4]${NC}  Uninstall Wings / Node saja"
+    echo -e "  ${YELLOW}[5]${NC}  Uninstall Panel + Wings"
     _line
     echo
     ask _menu "Pilih opsi" "1"
@@ -457,7 +511,7 @@ fi
 
 LOCATION_SHORT="${LOCATION_SHORT:-RafzHost}"
 LOCATION_LONG="${LOCATION_LONG:-RAFZHOST Indonesia}"
-NODE_NAME="RAFZHOST-NODE"
+NODE_NAME="RAFZHOST-NODE-01"
 NODE_DESCRIPTION="RAFZHOST Pterodactyl Node"
 ALLOCATION_START="2000"
 ALLOCATION_END="2999"
