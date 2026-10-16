@@ -1,182 +1,266 @@
-<!--
-  Panel-Healer README — dokumentasi penuh
-  Repo: https://github.com/Rafflie-CH/Panel-Healer
-  Brand: RAFZHOST × DEKZYMARKET
--->
+<!-- ============================================================
+  Panel-Healer — README profesional
+  https://github.com/Rafflie-CH/Panel-Healer
+  RAFZHOST × DEKZYMARKET
+  ============================================================ -->
 
-<div align="center">
+<p align="center">
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&duration=3500&pause=1200&color=A855F7&center=true&vCenter=true&width=700&lines=Panel-Healer+%E2%9A%A1;GodMode+Installer+v3.9;Healer+Toolkit+v3.5;RAFZHOST+%C3%97+DEKZYMARKET" alt="typing" />
+</p>
 
-# ⚡ Panel-Healer
-### Toolkit Pterodactyl All-in-One — **RAFZHOST × DEKZYMARKET**
+<p align="center">
+  <img src="https://img.shields.io/badge/⚡-Panel--Healer-0D1117?style=for-the-badge&labelColor=A855F7" alt="title" />
+</p>
 
-<img src="https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge" alt="stable" />
-<img src="https://img.shields.io/badge/godmode-v3.9-purple?style=for-the-badge" alt="godmode" />
-<img src="https://img.shields.io/badge/healer-v3.5-cyan?style=for-the-badge" alt="healer" />
+<p align="center">
+  <b>Toolkit Pterodactyl all-in-one</b> — install · heal · automation<br/>
+  <i>Satu repo untuk panel game server di VPS, dirancang biar pemula pun bisa.</i>
+</p>
 
-<br/>
+<p align="center">
+  <img src="https://img.shields.io/github/stars/Rafflie-CH/Panel-Healer?style=for-the-badge&logo=github&color=a855f7" alt="stars" />
+  <img src="https://img.shields.io/github/forks/Rafflie-CH/Panel-Healer?style=for-the-badge&logo=github&color=3b82f6" alt="forks" />
+  <img src="https://img.shields.io/github/issues/Rafflie-CH/Panel-Healer?style=for-the-badge&color=f43f5e" alt="issues" />
+  <img src="https://img.shields.io/github/last-commit/Rafflie-CH/Panel-Healer?style=for-the-badge&color=22c55e" alt="commit" />
+  <img src="https://img.shields.io/github/repo-size/Rafflie-CH/Panel-Healer?style=for-the-badge&color=eab308" alt="size" />
+</p>
 
-[![GitHub stars](https://img.shields.io/github/stars/Rafflie-CH/Panel-Healer?style=for-the-badge&logo=github&color=purple)](https://github.com/Rafflie-CH/Panel-Healer/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/Rafflie-CH/Panel-Healer?style=for-the-badge&logo=github&color=blue)](https://github.com/Rafflie-CH/Panel-Healer/network/members)
-[![GitHub issues](https://img.shields.io/github/issues/Rafflie-CH/Panel-Healer?style=for-the-badge)](https://github.com/Rafflie-CH/Panel-Healer/issues)
-[![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![Bash](https://img.shields.io/badge/Bash-4%2B-1f425f?style=for-the-badge&logo=gnu-bash&logoColor=white)](https://www.gnu.org/software/bash/)
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04%20%7C%2024.04-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)](https://ubuntu.com/)
-[![Pterodactyl](https://img.shields.io/badge/Pterodactyl-Panel%20%2B%20Wings-98FB98?style=for-the-badge)](https://pterodactyl.io/)
+<p align="center">
+  <img src="https://img.shields.io/badge/GodMode-v3.9-purple?style=for-the-badge&logo=gnubash&logoColor=white" alt="gm" />
+  <img src="https://img.shields.io/badge/Healer-v3.5-cyan?style=for-the-badge&logo=heart&logoColor=white" alt="hl" />
+  <img src="https://img.shields.io/badge/status-stable-brightgreen?style=for-the-badge" alt="st" />
+  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="lic" />
+</p>
 
-**Install · Perbaiki · Kelola panel game server (Pterodactyl) di VPS — tanpa harus jago coding.**
+<p align="center">
+  <img src="https://img.shields.io/badge/Ubuntu-22.04%20%7C%2024.04-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="ub" />
+  <img src="https://img.shields.io/badge/Bash-4%2B-1f425f?style=for-the-badge&logo=gnu-bash&logoColor=white" alt="bash" />
+  <img src="https://img.shields.io/badge/Pterodactyl-Panel%20%2B%20Wings-98FB98?style=for-the-badge" alt="ptero" />
+  <img src="https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="docker" />
+  <img src="https://img.shields.io/badge/Let's%20Encrypt-SSL-003A70?style=for-the-badge&logo=letsencrypt&logoColor=white" alt="le" />
+</p>
 
-<br/>
-
-### 📬 Hubungi kami (Telegram)
-
-| Akun | Link | Untuk apa |
-|------|------|-----------|
-| **@rafzbotz** | [t.me/rafzbotz](https://t.me/rafzbotz) | Akun utama — **lapor error / tanya teknis** |
-| **@rafzch** | [t.me/rafzch](https://t.me/rafzch) | Channel testimoni, produk dijual, info promo |
-| **@rafzhost** | [t.me/rafzhost](https://t.me/rafzhost) | Channel jam kerja, partner, pengumuman |
-
-[![Telegram Botz](https://img.shields.io/badge/Telegram-@rafzbotz_Lapor_Error-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/rafzbotz)
-[![Channel CH](https://img.shields.io/badge/Channel-@rafzch-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/rafzch)
-[![Channel Host](https://img.shields.io/badge/Channel-@rafzhost-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/rafzhost)
-
-> Kalau script error: kirim ke **@rafzbotz** — sertakan screenshot + isi `/root/ptero_install.log` (potong bagian password/token).
-
-<br/>
+<p align="center">
+  <a href="https://t.me/rafzbotz"><img src="https://img.shields.io/badge/Lapor_Error-@rafzbotz-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="tg1" /></a>
+  <a href="https://t.me/rafzch"><img src="https://img.shields.io/badge/Channel-@rafzch-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="tg2" /></a>
+  <a href="https://t.me/rafzhost"><img src="https://img.shields.io/badge/Info-@rafzhost-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="tg3" /></a>
+</p>
 
 ---
 
-### 📋 Salin perintah (satu per satu — siap tempel di terminal)
+<p align="center">
+  <img src="https://user-attachments.assets/placeholder-divider" width="0" height="0" alt="" />
+</p>
 
-</div>
+## 📑 Daftar Isi
 
-#### 1️⃣ Install panel penuh (GodMode)
+<table>
+<tr>
+<td width="50%" valign="top">
 
-[![Salin GodMode](https://img.shields.io/badge/📋_Salin_perintah-GodMode_Install-purple?style=for-the-badge)](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
+1. [✨ Banner & kontak](#-hubungi-kami)
+2. [🚀 One-liner siap salin](#-one-liner-siap-salin--klik-copy-di-blok-kode)
+3. [🎯 Apa ini?](#-apa-ini)
+4. [📚 Istilah](#-istilah-wajib-dipahami)
+5. [📁 Struktur repo](#-struktur-repo)
+6. [📋 Persyaratan](#-persyaratan-vps--dns)
+7. [🎓 Tutorial pemula](#-tutorial-pemula-dari-nol-sampai-panel-hidup)
+8. [🖥 Cara masuk VPS (SSH)](#-cara-masuk-vps-ssh)
+9. [🚀 GodMode](#-godmode-installer-v39)
+10. [🩺 Healer](#-healer-toolkit-v35)
+
+</td>
+<td width="50%" valign="top">
+
+11. [🤖 bot.zip](#-botzip--create-panel)
+12. [🌐 Tunnel](#-vps-tunnelling)
+13. [🗑 Uninstall](#-uninstall--reset)
+14. [⚙️ Non-interactive](#-mode-otomatis-env)
+15. [📄 Log & output](#-file-hasil--log)
+16. [🧪 Contoh sesi](#-contoh-sesi-end-to-end)
+17. [❓ FAQ](#-faq--error-umum)
+18. [🔐 Keamanan](#-keamanan)
+19. [🛣 Progress](#-progress--roadmap)
+20. [📜 Changelog](#-changelog)
+21. [💡 Filosofi](#-filosofi-kisah--pesan-mandiri)
+22. [🙏 Credits](#-credits)
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📬 Hubungi kami
+
+> [!IMPORTANT]
+> **Ada error?** Langsung lapor ke Telegram **[@rafzbotz](https://t.me/rafzbotz)**  
+> Sertakan screenshot + `tail -50 /root/ptero_install.log` (sensor password & token).
+
+| | Akun | Link | Fungsi |
+|:---:|:-----|:-----|:-------|
+| 🆘 | **@rafzbotz** | [t.me/rafzbotz](https://t.me/rafzbotz) | Akun utama — **lapor error / tanya teknis** |
+| 📣 | **@rafzch** | [t.me/rafzch](https://t.me/rafzch) | Channel testimoni, produk, promo |
+| ℹ️ | **@rafzhost** | [t.me/rafzhost](https://t.me/rafzhost) | Jam kerja, partner, pengumuman |
+
+<p align="center">
+  <a href="https://t.me/rafzbotz"><img src="https://img.shields.io/badge/💬_Chat-@rafzbotz-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" /></a>
+  <a href="https://t.me/rafzch"><img src="https://img.shields.io/badge/📢_Channel-@rafzch-0088cc?style=for-the-badge&logo=telegram&logoColor=white" /></a>
+  <a href="https://t.me/rafzhost"><img src="https://img.shields.io/badge/🏢_Host_Info-@rafzhost-229ED9?style=for-the-badge&logo=telegram&logoColor=white" /></a>
+</p>
+
+<details>
+<summary><b>📋 Template lapor error (klik buka)</b></summary>
+
+```text
+1. Perintah yang dijalankan:
+2. OS VPS (Ubuntu 22.04 / 24.04):
+3. Screenshot terminal:
+4. Output log:
+   tail -50 /root/ptero_install.log
+5. Domain panel / node (opsional):
+
+⚠️ JANGAN kirim password admin, PLTA, PLTC, atau token bot.
+```
+
+</details>
+
+---
+
+## 🚀 One-liner siap salin
+
+> [!TIP]
+> Di GitHub: arahkan kursor ke kanan atas blok kode → ikon **Copy** → tempel di terminal VPS (root) → Enter.
+
+<br/>
+
+### 1️⃣ GodMode — Install panel penuh
+
+<p align="center">
+  <img src="https://img.shields.io/badge/📋_COPY_THIS-GodMode_Install-a855f7?style=for-the-badge&logo=gnubash&logoColor=white" alt="copy-gm" />
+</p>
 
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
 ```
 
-#### 2️⃣ Perbaiki / heal panel yang sudah ada (Healer)
+| | |
+|:--|:--|
+| **File** | [`godmode.sh`](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh) |
+| **Versi** | `v3.9` |
+| **Untuk** | VPS baru / install dari nol |
+| **Hasil** | Panel + Wings + Node + Egg (+ bot opsional) |
 
-[![Salin Healer](https://img.shields.io/badge/📋_Salin_perintah-Panel_Healer-cyan?style=for-the-badge)](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh)
+<br/>
+
+### 2️⃣ Healer — Perbaiki panel yang sudah ada
+
+<p align="center">
+  <img src="https://img.shields.io/badge/📋_COPY_THIS-Panel_Healer-06b6d4?style=for-the-badge&logo=heart&logoColor=white" alt="copy-hl" />
+</p>
 
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh)
 ```
 
-#### 3️⃣ VPS Tunnelling (repo terpisah)
+| | |
+|:--|:--|
+| **File** | [`healer.sh`](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh) |
+| **Versi** | `v3.5` |
+| **Untuk** | Panel error, disk penuh, Docker rusak, stuck loading |
+| **Hasil** | Menu perbaikan interaktif + auto-diagnosa |
 
-[![Salin Tunnel](https://img.shields.io/badge/📋_Salin_perintah-VPS_Tunnelling-blue?style=for-the-badge)](https://raw.githubusercontent.com/Rafflie-CH/vps-tunelling/main/bash.sh)
+<br/>
+
+### 3️⃣ VPS Tunnelling (repo terpisah)
+
+<p align="center">
+  <img src="https://img.shields.io/badge/📋_COPY_THIS-VPS_Tunnelling-3b82f6?style=for-the-badge&logo=cloudflare&logoColor=white" alt="copy-tn" />
+</p>
 
 ```bash
 bash <(curl -s https://raw.githubusercontent.com/Rafflie-CH/vps-tunelling/main/bash.sh)
 ```
 
-<div align="center">
-
-**Cara pakai perintah di atas (pemula):**  
-1. Buka terminal VPS (SSH) sebagai **root**  
-2. **Blok kode** di atas → klik ikon copy di kanan blok (GitHub) atau seleksi manual → salin  
-3. Tempel di terminal → tekan **Enter**  
-4. Ikuti pertanyaan di layar
-
-[📖 Daftar isi](#-daftar-isi) ·
-[🎓 Tutorial pemula 0→panel](#-tutorial-pemula-dari-nol-sampai-panel-hidup) ·
-[📜 Changelog](#-changelog) ·
-[🛣 Progress](#-progress--roadmap)
-
-</div>
+| | |
+|:--|:--|
+| **Repo** | [Rafflie-CH/vps-tunelling](https://github.com/Rafflie-CH/vps-tunelling) |
+| **Untuk** | Tunnel / expose layanan VPS |
 
 ---
 
-## 📑 Daftar Isi
-
-1. [Apa itu proyek ini?](#-apa-itu-proyek-ini)
-2. [Istilah yang wajib dipahami](#-istilah-yang-wajib-dipahami-baca-ini-dulu)
-3. [Struktur file di repo](#-struktur-file-di-repo)
-4. [Persyaratan VPS & DNS](#-persyaratan-vps--dns)
-5. [Tutorial pemula: dari nol sampai panel hidup](#-tutorial-pemula-dari-nol-sampai-panel-hidup)
-6. [GodMode — installer lengkap](#-godmode--installer-lengkap-v39)
-7. [Healer — toolkit perbaikan](#-healer--toolkit-perbaikan-v35)
-8. [bot.zip — bot Telegram Create Panel](#-botzip--bot-telegram-create-panel)
-9. [VPS Tunnelling](#-vps-tunnelling)
-10. [Uninstall & reset](#-uninstall--reset)
-11. [Mode otomatis (tanpa ketik interaktif)](#-mode-otomatis-tanpa-ketik-interaktif)
-12. [File hasil install & log](#-file-hasil-install--log)
-13. [Contoh sesi install end-to-end](#-contoh-sesi-install-end-to-end)
-14. [FAQ & error umum](#-faq--error-umum)
-15. [Keamanan](#-keamanan)
-16. [Progress & roadmap](#-progress--roadmap)
-17. [Changelog](#-changelog)
-18. [Kontak & dukungan](#-kontak--dukungan)
-19. [Credits](#-credits)
-
----
-
-## 🎯 Apa itu proyek ini?
-
-**Panel-Healer** adalah kumpulan **script bash** (perintah otomatis di Linux) untuk:
-
-| Tujuan | Script | Satu kalimat |
-|--------|--------|----------------|
-| **Pasang** panel game server baru | `godmode.sh` | Satu perintah → Panel + Wings + node + egg (+ bot opsional) |
-| **Perbaiki** panel yang rusak / VPS bermasalah | `healer.sh` | Menu angka: bersihkan, fix Docker, anti-spam, dll. |
-| **Bot Telegram** buat server otomatis | `bot.zip` | User chat bot → server Pterodactyl terbuat |
-| **Tunnel** (repo lain) | `vps-tunelling` | Bantu expose/tunnel layanan VPS |
-
-Semua dijalankan di **VPS Linux** (komputer sewa di cloud), biasanya lewat **SSH** (remote terminal).
-
-**Bukan** aplikasi Windows/Android yang di-double-click.  
-**Bukan** cPanel hosting klasik.  
-“**CPanel**” di bot = **Create Panel** (membuat server di Pterodactyl lewat Telegram).
-
----
-
-## 📚 Istilah yang wajib dipahami (baca ini dulu)
-
-| Istilah | Arti sederhana |
-|---------|----------------|
-| **VPS** | Komputer sewa di internet (DigitalOcean, Contabo, dll.) yang kamu kendalikan 24 jam |
-| **SSH** | Cara “masuk” ke VPS dari laptop/HP lewat terminal (contoh app: Termius, Server Auditor, PuTTY) |
-| **Root** | Akun super-admin di Linux. Script ini **wajib root** |
-| **Domain** | Nama seperti `panel.namamu.com` yang diarahkan ke IP VPS |
-| **DNS A record** | Pengaturan di penjual domain: nama → angka IP VPS |
-| **Pterodactyl Panel** | Website admin untuk kelola server game/bot |
-| **Wings** | Program di VPS yang menjalankan server (Docker) atas perintah panel |
-| **Docker** | Teknologi “kotak” isolasi tempat server game/bot berjalan |
-| **Allocation** | Kombinasi IP + port (contoh `1.2.3.4:25565`) untuk server |
-| **Egg** | Template cara menjalankan server (startup, Docker image, variabel) |
-| **PLTA** | API key tipe Application (panel → buat node/server lewat API) |
-| **PLTC** | API key tipe Client (kontrol power start/stop server) |
-| **Let's Encrypt / SSL** | Sertifikat HTTPS gratis agar gembok hijau di browser |
-| **One-liner** | Satu baris perintah yang mengunduh + menjalankan script |
-
-Kalau istilah di atas sudah kebayang, lanjut tutorial.
-
----
-
-## 📁 Struktur file di repo
+## 🎯 Apa ini?
 
 ```text
-https://github.com/Rafflie-CH/Panel-Healer
-│
-├── godmode.sh     ← Installer utama (v3.9)
-├── healer.sh      ← Toolkit perbaikan (v3.5)
-├── bot.zip        ← Source bot Telegram (JANGAN di-extract di GitHub)
-├── test.sh        ← Util / percobaan (opsional)
-└── README.md      ← Dokumentasi ini
+┌─────────────────────────────────────────────────────────────┐
+│  Panel-Healer = toolbox bash untuk Pterodactyl di VPS      │
+│                                                             │
+│  godmode.sh  →  PASANG panel + wings + egg + bot            │
+│  healer.sh   →  PERBAIKI vps / panel yang bermasalah        │
+│  bot.zip     →  BOT Telegram "Create Panel"                 │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-| File | Apa isinya | Kapan dipakai |
-|------|------------|----------------|
-| **godmode.sh** | Ratusan baris bash: cek OS, install panel, SSL, Wings, API, egg, bot, uninstall | VPS baru atau reinstall |
-| **healer.sh** | Menu interaktif perbaikan + auto-diagnosa | Panel sudah ada tapi error / penuh / stuck |
-| **bot.zip** | Node.js bot (index.js, settings.js, plugins, …) | GodMode opsi “pasang bot” = y, atau manual |
-| **test.sh** | Script bantu uji | Developer / advanced |
+| Komponen | Badge | Fungsi satu kalimat |
+|:---------|:-----:|:--------------------|
+| **godmode.sh** | ![](https://img.shields.io/badge/v3.9-purple) | Satu perintah → Panel + Wings + Location + Node + Allocation + Egg + (opsional) bot |
+| **healer.sh** | ![](https://img.shields.io/badge/v3.5-cyan) | Dashboard diagnosa & perbaikan (dpkg, deep clean, docker, rate-limit, hama) |
+| **bot.zip** | ![](https://img.shields.io/badge/Telegram-bot-26A5E4) | Bot **Create Panel** — user chat Telegram → server Pterodactyl terbuat |
 
-**Aturan bot.zip:** file di repo harus tetap **`.zip` utuh**.  
-GodMode akan mengunduh/extract sendiri ke folder server.
+### ⚠️ “CPanel” di sini = Create Panel — BUKAN cPanel hosting
+
+> [!WARNING]
+> **CPanel / Create Panel** = bot Telegram untuk **membuat (create) server** di Pterodactyl.  
+> **Bukan** software hosting **cPanel** (cpanel.net), bukan port 2083.
+
+| ✅ Maksud repo ini | ❌ Bukan ini |
+|:-------------------|:-------------|
+| **C**reate **Panel** — bot bikin server Pterodactyl | cPanel hosting web komersial |
+| Prompt GodMode: *“pasang bot CPanel?”* = pasang bot Telegram | Install cPanel di VPS |
+
+---
+
+## 📚 Istilah wajib dipahami
+
+<details open>
+<summary><b>Klik untuk buka/tutup kamus singkat</b></summary>
+
+| Istilah | Arti sederhana |
+|:--------|:---------------|
+| **VPS** | Komputer sewa di cloud (DigitalOcean, Contabo, dll.) |
+| **SSH** | Cara masuk ke VPS lewat terminal jarak jauh |
+| **Root** | Akun super-admin Linux — script ini **wajib root** |
+| **Domain** | Nama seperti `panel.namamu.com` |
+| **DNS A record** | Pengaturan domain → angka IP VPS |
+| **Pterodactyl Panel** | Website admin kelola server game/bot |
+| **Wings** | Program di VPS yang menjalankan server (Docker) |
+| **Docker** | “Kotak” isolasi tempat server berjalan |
+| **Allocation** | IP + port (contoh `1.2.3.4:25565`) |
+| **Egg** | Template cara jalankan server (startup, image, variabel) |
+| **PLTA** | API key Application (buat node/server lewat API) |
+| **PLTC** | API key Client (start/stop server) |
+| **SSL / Let's Encrypt** | HTTPS / gembok hijau di browser |
+| **One-liner** | Satu baris perintah unduh + jalankan script |
+| **CPanel (di sini)** | **Create Panel** — bot Telegram (**bukan** cPanel hosting) |
+
+</details>
+
+---
+
+## 📁 Struktur repo
+
+```text
+📦 Panel-Healer
+ ┣ 📜 godmode.sh     ─── Installer utama (v3.9)          ✅ wajib
+ ┣ 📜 healer.sh      ─── Toolkit perbaikan (v3.5)        ✅ wajib
+ ┣ 📦 bot.zip        ─── Bot Telegram Create Panel       ✅ jika pakai bot
+ ┣ 📜 test.sh        ─── Util / test                     ⚪ opsional
+ ┗ 📄 README.md      ─── Dokumentasi ini
+```
+
+> [!NOTE]
+> **`bot.zip` harus tetap berbentuk ZIP** di branch `main`.  
+> Jangan extract ke repo. GodMode yang extract ke volume server.
 
 ---
 
@@ -185,416 +269,325 @@ GodMode akan mengunduh/extract sendiri ke folder server.
 ### VPS
 
 | Item | Minimal | Disarankan |
-|------|---------|------------|
-| OS | Ubuntu **22.04** atau **24.04** | 24.04 |
-| CPU | 2 vCPU | 4 vCPU |
-| RAM | 2 GB | 4 GB+ |
-| Disk | 20 GB bebas | 40 GB+ SSD |
-| Akses | Login **root** | root + password/SSH key |
-| Firewall | Buka **80, 443, 8080, 2022** | + port game yang dipakai |
-
-Cek OS setelah login SSH:
+|:-----|:-------:|:----------:|
+| 🖥 OS | Ubuntu **22.04 / 24.04** | 24.04 |
+| ⚙️ CPU | 2 vCPU | 4 vCPU |
+| 🧠 RAM | 2 GB | **4 GB+** |
+| 💾 Disk | 20 GB bebas | 40 GB+ SSD |
+| 👤 Akses | **root** | root + SSH key |
+| 🔥 Firewall | 80, 443, 8080, 2022 | + port game |
 
 ```bash
 cat /etc/os-release
-whoami
-# harus cetak: root
+whoami    # harus: root
 ```
 
-### Domain & DNS (wajib sebelum GodMode install)
+### DNS (wajib sebelum install)
 
-Kamu butuh **2 nama** (boleh subdomain):
-
-| Peran | Contoh nama | Tipe DNS | Isi |
-|-------|-------------|----------|-----|
-| Panel (website admin) | `panel.contoh.com` | **A** | IP publik VPS |
-| Node (Wings / daemon) | `node.contoh.com` | **A** | IP publik VPS **yang sama** |
-
-Cek dari laptop (atau dari VPS):
+| Peran | Contoh | Tipe | Value |
+|:------|:-------|:----:|:------|
+| Panel | `panel.contoh.com` | **A** | IP publik VPS |
+| Node | `node.contoh.com` | **A** | IP publik VPS **sama** |
 
 ```bash
 dig +short panel.contoh.com @8.8.8.8
-dig +short node.contoh.com @8.8.8.8
+dig +short node.contoh.com  @8.8.8.8
 ```
 
-Hasilnya harus **sama** dengan IP VPS.  
-Kalau masih kosong / IP lain → **jangan** lanjut install; tunggu propagasi DNS.
+Kedua hasil harus = IP VPS. Kalau belum → tunggu propagasi DNS.
 
-### Opsional (untuk bot Telegram)
-
-1. Buat bot di [@BotFather](https://t.me/BotFather) → dapat **token** `123456:AAF...`
-2. Ambil ID angka kamu di [@userinfobot](https://t.me/userinfobot)
-3. (Opsional) Cloudflare Zone ID + API Token untuk subdomain otomatis
+```mermaid
+flowchart LR
+  A[🌐 Domain] -->|A record| B[📡 DNS]
+  B --> C[🖥 VPS IP]
+  C --> D[⚡ GodMode]
+  D --> E[🟣 Panel HTTPS]
+  D --> F[🟢 Wings :8080]
+```
 
 ---
 
 ## 🎓 Tutorial pemula: dari nol sampai panel hidup
 
-Ikuti **urut**. Jangan loncat.
+> [!TIP]
+> Ikuti **urut A → K**. Jangan loncat. Cocok untuk yang belum pernah ngoding.
 
-### Langkah A — Sewa VPS & catat IP
+| Step | Judul | Ringkas |
+|:----:|:------|:--------|
+| **A** | Sewa VPS | Catat IP + password root |
+| **B** | DNS | 2× A record → IP VPS |
+| **C** | SSH | Masuk VPS (Colab / Termius / PC) |
+| **D** | Root | `sudo su` → `whoami` = root |
+| **E** | GodMode | Tempel one-liner install |
+| **F** | Menu | Pilih **`1`** Install |
+| **G** | Isi form | Domain, email, user, password, bot? |
+| **H** | Tunggu | 10–30 menit, jangan tutup SSH |
+| **I** | Login | Browser → `https://domain-panel` |
+| **J** | Error? | Log + screenshot → [@rafzbotz](https://t.me/rafzbotz) |
+| **K** | Rusak nanti | Jalankan **Healer**, jangan reinstall dulu |
 
-1. Beli VPS Ubuntu 22.04/24.04.
-2. Catat: **IP** (contoh `152.42.223.223`), **password root** (atau SSH key).
+### Detail singkat per langkah
 
-### Langkah B — Arahkan domain
-
-1. Masuk ke tempat beli domain (Cloudflare, Namecheap, Niagahoster, dll.).
-2. Buat 2 record **A**:
-   - `panel` → IP VPS  
-   - `node` → IP VPS  
-3. Tunggu sampai `dig` menampilkan IP yang benar.
-
-### Langkah C — Masuk VPS lewat SSH
-
-**Dari HP (Server Auditor / Termius / JuiceSSH):**
-
-1. New connection → Host = IP VPS, User = `root`, Password = password VPS.
-2. Connect.
-
-**Dari Windows (PuTTY / Windows Terminal):**
-
-```text
-ssh root@IP_VPS
-```
-
-Kalau ditanya fingerprint, ketik `yes`.
-
-### Langkah D — Jadi root (jika belum)
-
-```bash
-sudo su
-whoami
-```
-
-Harus keluar: `root`.
-
-### Langkah E — Jalankan GodMode
-
-Salin **hanya** perintah ini (satu baris):
-
-```bash
-bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
-```
-
-Tempel di terminal → Enter.
-
-Artinya:
-
-- `curl` mengunduh script dari GitHub  
-- `bash` menjalankannya langsung  
-- Tidak perlu `git clone` manual  
-
-### Langkah F — Pilih menu
-
-```text
-[1] Install Panel + Wings + Egg (God Mode)   ← pilih ini
-[2] … uninstall …
-```
-
-Ketik `1` lalu Enter.
-
-### Langkah G — Jawab pertanyaan
-
-Contoh isian:
-
-```text
-Domain Panel     : panel.contoh.com
-Domain Node      : node.contoh.com
-Email Admin      : emailkamu@gmail.com
-Username Admin   : admin
-Nama Depan       : Admin
-Nama Belakang    : Rafz
-Password Admin   : (buat password kuat, ingat!)
-Alias Allocation : NODE-01
-Bot CPanel?      : n          (ketik y jika mau bot)
-```
-
-- **Enter** saja = pakai nilai default di dalam kurung `[...]`.
-- Domain panel dan node **tidak boleh sama**.
-
-### Langkah H — Tunggu
-
-Proses bisa **10–30 menit** (unduh paket, panel, Docker, SSL).  
-Jangan tutup SSH.  
-Kalau putus, cek log:
-
-```bash
-tail -100 /root/ptero_install.log
-```
-
-### Langkah I — Selesai: login panel
-
-Di akhir script akan tampil URL + username + password.  
-Buka browser:
-
-```text
-https://panel.contoh.com
-```
-
-Login dengan username/password yang kamu isi.
-
-### Langkah J — Kalau error
-
-1. Screenshot terminal.  
-2. Salin 30–50 baris terakhir:
-
-```bash
-tail -50 /root/ptero_install.log
-```
-
-3. Kirim ke Telegram **[@rafzbotz](https://t.me/rafzbotz)** (sensor password & token bot).
-
-### Langkah K — Panel sudah ada tapi bermasalah
-
-Jangan install ulang dulu. Jalankan Healer:
-
-```bash
-bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh)
-```
-
-Pilih menu sesuai keluhan (lihat tabel Healer di bawah).
+**A–B** — Beli VPS Ubuntu, arahkan `panel` & `node` ke IP.  
+**C** — Lihat [Cara masuk VPS](#-cara-masuk-vps-ssh).  
+**D** — Pastikan prompt root.  
+**E** — Salin perintah GodMode di atas.  
+**F–G** — Jawab pertanyaan; Enter = default. Domain panel ≠ domain node.  
+**H** — Log: `tail -f /root/ptero_install.log`  
+**I** — Pakai username/password yang kamu isi (atau `/root/rafzhost-panel-data.txt`).  
+**J** — Sensor rahasia sebelum kirim.  
+**K** — One-liner Healer.
 
 ---
 
-## 🚀 GodMode — Installer lengkap (v3.9)
+## 🖥 Cara masuk VPS (SSH)
 
-**File:** [godmode.sh](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
+Pilih **satu** metode.
 
-### Fitur (daftar lengkap)
+### ① Google Colab — tanpa PC, tanpa Termux
 
-| # | Fitur | Penjelasan |
-|---|--------|------------|
-| 1 | Panel + Wings 1 VPS | Install web panel + daemon di mesin yang sama |
-| 2 | Location + Node + Allocation | Otomatis lewat API setelah panel hidup |
-| 3 | Egg Nusantara Ultimate v9 | Template PM2 multi-bot, SSH, Yarn/NPM, Python, Cloudflared |
-| 4 | Proteksi egg | Non-root sulit export / lihat startup mentah |
-| 5 | SSL Unified | 1 sertifikat Let's Encrypt untuk domain panel **dan** node |
-| 6 | Antisipasi rate limit LE | Fallback staging/self-signed + cron retry tiap 6 jam |
-| 7 | Wings native TLS port 8080 | Daemon HTTPS langsung, tanpa reverse-proxy 443 khusus node |
-| 8 | Bot Create Panel opsional | Buat server `CPANEL RAFZHOST`, extract bot.zip, isi settings.js, start |
-| 9 | Menu uninstall | Reset VPS / panel only / wings only / both |
-| 10 | UI berwarna | Teks warna di terminal (gaya Healer) |
-| 11 | Log + file data | `/root/ptero_install.log`, `/root/rafzhost-panel-data.txt` |
-| 12 | Mode ENV | Bisa dijalankan tanpa ketik (otomasi) |
+<p align="center">
+  <img src="https://img.shields.io/badge/Google-Colab-F9AB00?style=for-the-badge&logo=googlecolab&logoColor=white" />
+</p>
 
-### Menu saat dibuka
+1. Buka **[https://colab.new](https://colab.new)** (login Google).
+2. Buka **Terminal** (ikon `>_` di panel Colab).
+3. Ketik:
 
-| Tombol | Nama | Kapan dipakai |
-|--------|------|----------------|
-| **1** | Install God Mode | VPS baru / pasang dari nol |
-| **2** | Reset VPS (Deep Clean) | Mau hapus **semua** jejak panel/docker/nginx/db (ketik `YES`) |
-| **3** | Uninstall Panel saja | Hapus website panel, DB panel, cron panel |
-| **4** | Uninstall Wings saja | Hapus daemon + volume server |
-| **5** | Uninstall Panel + Wings | Gabungan 3 + 4 |
+```bash
+ssh root@IP_VPS_KAMU
+```
 
-### Yang ditanya saat install (menu 1)
+4. Fingerprint? → ketik `yes`.  
+5. Password root (ketikan **tidak terlihat** — normal) → Enter.  
+6. Berhasil jika muncul `root@...:~#`.
 
-| Urutan | Pertanyaan | Contoh | Wajib? |
-|--------|------------|--------|--------|
-| 1 | Domain Panel | `panel.contoh.com` | Ya |
-| 2 | Domain Node | `node.contoh.com` | Ya |
-| 3 | Email Admin | `admin@gmail.com` | Ya |
-| 4 | Username Admin | `admin` | Ya |
-| 5 | Nama Depan | `Admin` | Tidak |
-| 6 | Nama Belakang | `Rafz` | Tidak |
-| 7 | Password Admin | `******` | Ya |
-| 8 | Alias Allocation | `NODE-JKT-01` | Tidak (default nama node) |
-| 9 | Pasang bot CPanel? | `y` / `n` | Tidak |
-| 10 | Token bot | dari BotFather | Jika 9 = y |
-| 11 | ID Owner Telegram | angka dari userinfobot | Jika 9 = y |
-| 12 | Pakai Cloudflare? | `y` / `n` | Tidak |
-| 13 | Domain CF / Zone / API | — | Jika 12 = y |
+> Sesi Colab bisa putus saat idle. Ulangi `ssh` jika terputus.
 
-**Tidak ditanya (otomatis):** hostname mesin, location `RafzHost`, IP allocation = IP VPS, port **2000–2999**.
+### ② Termius — HP Android / iOS / PC
 
-### Urutan kerja internal (step)
+<p align="center">
+  <img src="https://img.shields.io/badge/Termius-SSH-000000?style=for-the-badge&logo=terminus&logoColor=white" />
+</p>
 
-| Step | Nama | Yang terjadi (bahasa manusia) |
-|------|------|-------------------------------|
-| 01 | Cek sistem | Pastikan Ubuntu & arsitektur didukung |
-| 02 | Dependency | Install tools: curl, jq, dig, redis, dll. |
-| 03 | IP VPS | Deteksi IP publik |
-| 04 | DNS | Bandingkan DNS domain dengan IP VPS |
-| 05 | Panel | Pasang Pterodactyl Panel + Nginx + database |
-| 05c | SSL | Minta/reuse sertifikat HTTPS untuk 2 domain |
-| 06 | Wings | Pasang Docker + program Wings |
-| 07 | API keys | Buat PLTA & PLTC untuk admin |
-| 08 | Tes API | Pastikan PLTA bisa dipanggil |
-| 09 | Location | Buat lokasi di panel |
-| 10 | Node | Daftarkan node (mesin ini) |
-| 11 | Allocation | Siapkan rentang port 2000–2999 |
-| 12 | Config Wings | Tulis `config.yml` (TLS port 8080) |
-| 13 | Start Wings | Nyalakan service wings |
-| 14 | Verifikasi | Cek panel bisa bicara dengan Wings |
-| 15 | Egg | Import egg Nusantara v9 + pengamanan |
-| 16 | Bot | (Opsional) server bot + settings + start |
-| 17 | Ringkasan | Tampilkan login, kunci API, path log |
+1. Install **Termius** (Play Store / App Store / [termius.com](https://termius.com/)).
+2. **+** → **New Host**.
+3. Isi:
+   - **Address:** IP VPS  
+   - **Port:** `22`  
+   - **Username:** `root`  
+   - **Password:** password VPS  
+4. **Save** → ketuk host → **Connect**.  
+5. Accept fingerprint jika diminta.
 
-### SSL & rate limit (detail)
+**Tips:** aktifkan Keep-alive; jangan screenshot password; bisa simpan banyak host.
 
-- Nama cert internal: **`rafzhost-ssl`** (satu cert, dua domain).
-- Jika Let's Encrypt menolak (terlalu banyak request):
-  - pakai staging atau self-signed sementara;
-  - cron **`/usr/local/bin/rafz-ssl-retry`** mencoba lagi tiap **6 jam**.
-- Paksa coba ulang manual:
+### ③ App SSH lain (HP)
+
+Server Auditor, JuiceSSH, dll. — pola sama: IP + `root` + password + port 22.
+
+### ④ Windows / Linux / Mac
+
+```bash
+ssh root@IP_VPS
+```
+
+PuTTY: Host Name = IP → Open → login `root`.
+
+---
+
+## 🚀 GodMode Installer (v3.9)
+
+<p align="center">
+  <img src="https://img.shields.io/badge/GodMode-v3.9-a855f7?style=for-the-badge&logo=gnubash&logoColor=white" />
+  <img src="https://img.shields.io/badge/Panel-Wings-Egg-Bot-0ea5e9?style=for-the-badge" />
+</p>
+
+**File:** [`godmode.sh`](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
+
+### Fitur
+
+| # | Fitur | Keterangan |
+|:-:|:------|:-----------|
+| 01 | Panel + Wings 1 mesin | Upstream pterodactyl-installer + patch RAFZ |
+| 02 | Location / Node / Allocation | Otomatis lewat Application API |
+| 03 | Egg Nusantara Ultimate **v9** | PM2, SSH, Yarn/NPM, Python, Cloudflared |
+| 04 | Proteksi egg | Non-root dipersulit export / salin startup |
+| 05 | SSL **Unified** | 1 cert LE untuk panel + node |
+| 06 | Rate-limit LE | Staging/self-signed + cron retry 6 jam |
+| 07 | Wings native TLS **:8080** | Tanpa nginx reverse-proxy daemon |
+| 08 | Bot Create Panel | Opsional — server + settings.js + start |
+| 09 | Menu uninstall | Reset VPS / panel / wings / both |
+| 10 | UI berwarna | Palette cyberpunk ala Healer |
+| 11 | Log + data file | `ptero_install.log` + `rafzhost-panel-data.txt` |
+| 12 | Mode ENV | Non-interactive automation |
+
+### Menu interaktif
+
+```text
+════════════════════════════════════════════════════════════
+  RAFZHOST × DEKZYMARKET · GOD MODE v3.9
+════════════════════════════════════════════════════════════
+  [1]  Install Panel + Wings + Egg
+  [2]  Uninstall — Reset VPS (Deep Clean)     ← ketik YES
+  [3]  Uninstall Panel saja
+  [4]  Uninstall Wings / Node saja
+  [5]  Uninstall Panel + Wings
+════════════════════════════════════════════════════════════
+```
+
+### Prompt install (menu 1)
+
+| # | Pertanyaan | Contoh | Wajib |
+|:-:|:-----------|:-------|:----:|
+| 1 | Domain Panel | `panel.contoh.com` | ✅ |
+| 2 | Domain Node | `node.contoh.com` | ✅ |
+| 3 | Email Admin | `admin@gmail.com` | ✅ |
+| 4 | Username | `admin` | ✅ |
+| 5–6 | Nama depan/belakang | Admin / Rafz | ⚪ |
+| 7 | Password Admin | •••••• | ✅ |
+| 8 | Alias Allocation | `NODE-01` | ⚪ |
+| 9 | Pasang bot CPanel? | `y` / `n` | ⚪ |
+| 10–11 | Token + Owner ID | BotFather + userinfobot | jika y |
+| 12–13 | Cloudflare | domain / zone / key | jika y |
+
+**Otomatis:** IP VPS, port **2000–2999**, location `RafzHost`, hostname mesin.
+
+### Pipeline internal
+
+```mermaid
+flowchart TD
+  S01[01 Cek OS] --> S02[02 Dependency]
+  S02 --> S03[03 IP VPS]
+  S03 --> S04[04 DNS]
+  S04 --> S05[05 Panel]
+  S05 --> S05c[05c SSL Unified]
+  S05c --> S06[06 Wings + Docker]
+  S06 --> S07[07 PLTA/PLTC]
+  S07 --> S08[08 Tes API]
+  S08 --> S09[09 Location]
+  S09 --> S10[10 Node]
+  S10 --> S11[11 Allocation]
+  S11 --> S12[12 config.yml]
+  S12 --> S13[13 Start Wings]
+  S13 --> S14[14 Verifikasi]
+  S14 --> S15[15 Egg v9]
+  S15 --> S16[16 Bot opsional]
+  S16 --> S17[17 Ringkasan]
+```
+
+| Step | Nama | Bahasa manusia |
+|:----:|:-----|:---------------|
+| 01–04 | Persiapan | OS, tools, IP, DNS harus match |
+| 05–05c | Panel + SSL | Website admin + HTTPS |
+| 06–07 | Wings + keys | Docker, daemon, API keys |
+| 08–11 | Struktur panel | Location, node, port range |
+| 12–14 | Hubungkan | Config wings, start, tes panel↔wings |
+| 15–16 | Egg + bot | Template server + bot Telegram |
+| 17 | Selesai | Cetak login & path log |
+
+### SSL
+
+- Cert name: **`rafzhost-ssl`** (panel + node).  
+- Rate limit → staging/self-signed + cron `/usr/local/bin/rafz-ssl-retry` tiap 6 jam.  
 
 ```bash
 sudo /usr/local/bin/rafz-ssl-retry
 ```
 
-### Egg Nusantara Ultimate v9 (detail)
+---
 
-- Di dalam script (bukan file terpisah di repo).
-- Cocok untuk bot Node multi-proses (PM2), opsi SSH, Yarn/NPM, Python, token Cloudflared.
-- Setelah import: user non-root dipersulit **export egg** / menyalin startup mentah dari UI admin.
+## 🩺 Healer Toolkit (v3.5)
 
-### Bot CPanel otomatis (detail step 16)
+<p align="center">
+  <img src="https://img.shields.io/badge/Healer-v3.5-06b6d4?style=for-the-badge&logo=heart&logoColor=white" />
+</p>
 
-1. Cari allocation kosong (atau buat port ekstra).  
-2. Buat server nama **`CPANEL RAFZHOST`**, owner = admin install.  
-3. Ambil zip: `/root/bot.zip` **atau** unduh dari repo `main/bot.zip`.  
-4. Extract ke volume Docker/Wings.  
-5. Tulis `settings.js` (owner, domain panel, PLTA, PLTC, egg, nest, loc, CF).  
-6. Tulis token ke `session/creds.json`.  
-7. Tunggu install script egg (npm install) → kirim sinyal **start** (dengan retry).
+**File:** [`healer.sh`](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh)
+
+Dashboard berwarna + **auto-check** setiap buka menu.
+
+| Cek otomatis | Ambang | Saran menu |
+|:-------------|:------:|:-----------|
+| Koneksi :80/:443 | > 350 | **09** |
+| Koneksi :8080 | > 200 | **09** / **07** |
+| Nginx abort socket | ada di log | **09** |
+| Wings inactive | — | **05** / **06** |
+
+### Menu
+
+| Kode | Nama | Untuk pemula | Risiko |
+|:----:|:-----|:-------------|:------:|
+| **01** | 🔒 Fix DPKG Lock | Apt/dpkg macet | 🟢 |
+| **02** | ☢️ Deep Clean | Hapus hampir semua jejak panel/docker/db | 🔴 backup dulu |
+| **03** | 🧹 Quick Clean Disk | Log & cache | 🟢 |
+| **04** | 🧨 Wipe Volumes | Data server nyangkut | 🟠 |
+| **05** | 🔌 Fix Docker Socket | Wings tak nyambung Docker | 🟡 |
+| **06** | 🌀 Reinstall Docker | Docker corrupt | 🟡 |
+| **07** | 🚨 Ciduk Hama | Server abuser resource | 🟠 |
+| **08** | 📥 Pterodactyl Core | Installer resmi upstream | 🟡 |
+| **09** | 🛡️ Rate Limit & Flush | Anti-spam + lepas stuck | 🟢 |
+| **X** | ❌ Exit | Keluar | — |
 
 ---
 
-## 🩺 Healer — Toolkit perbaikan (v3.5)
+## 🤖 bot.zip — Create Panel
 
-**File:** [healer.sh](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh)
+<p align="center">
+  <img src="https://img.shields.io/badge/Telegram-Create_Panel_Bot-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" />
+</p>
 
-### Cara jalankan
+**File:** [`bot.zip`](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/bot.zip)
 
-```bash
-bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh)
-```
-
-Harus root. Tampilan berwarna; tiap buka menu ada **auto-check**.
-
-### Auto-check saat dashboard
-
-| Yang dicek | Kalau bermasalah | Arahkan ke menu |
-|------------|------------------|-----------------|
-| Banyak koneksi port 80/443 | Panel lambat / stuck | **09** |
-| Banyak koneksi port 8080 | Wings kewalahan | **09** atau **07** |
-| Log nginx “aborting / open socket” | Web panel putus-putus | **09** |
-| Service wings mati | Server game tidak nyala | **05** / **06** |
-
-### Menu lengkap
-
-| Kode | Nama | Penjelasan untuk pemula | Risiko |
-|------|------|-------------------------|--------|
-| **01** | Fix DPKG Lock | Mengunci apt “sedang dipakai” dilonggarkan agar update bisa jalan | Rendah |
-| **02** | Deep Clean Panel | **Menghapus hampir semua** panel, Docker, Nginx, database | **TINGGI** — backup dulu |
-| **03** | Quick Clean Disk | Hapus log/cache sampah biar disk lega | Rendah |
-| **04** | Wipe Volumes | Hapus data server game yang nyangkut di disk | Tinggi untuk data server |
-| **05** | Fix Docker Socket | Perbaiki hubungan Wings ↔ Docker | Sedang |
-| **06** | Reinstall Docker | Pasang ulang Docker dari nol | Sedang |
-| **07** | Auto Ciduk Hama | Cari server yang menyedot resource, opsi hapus | Sedang–tinggi |
-| **08** | Pterodactyl Core | Jalankan installer resmi upstream | Sedang |
-| **09** | Rate Limit & Flush | Batasi spam request + bersihkan koneksi macet | Rendah |
-| **X** | Keluar | Tutup toolkit | — |
-
-Setelah selesai satu menu, biasanya diminta ketik **`X`** lalu Enter untuk kembali ke dashboard.
-
----
-
-## 🤖 bot.zip — Bot Telegram Create Panel
-
-**File:** [bot.zip](https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/bot.zip)
-
-### Apa gunanya?
-
-User di Telegram mengetik perintah → bot memanggil API Pterodactyl → **server baru** terbuat (ram/disk/cpu sesuai wizard).
-
-### Isi zip (setelah di-extract)
+> **Create Panel** = bikin server Pterodactyl lewat chat Telegram. **Bukan** cPanel hosting.
 
 ```text
-index.js         # program utama + koneksi Telegram
-settings.js      # pengaturan (owner, panel, Cloudflare)
-case.js          # daftar perintah bot
-package.json     # daftar library Node.js
-library/         # database JSON, antiflood, monitor
-plugins/         # fitur tambahan (menu, tools, …)
-session/         # menyimpan token bot
-Dockerfile       # opsional jalan di Docker
+bot.zip
+ ┣ index.js / case.js / package.json
+ ┣ settings.js          ← owner, panelServer, Cloudflare
+ ┣ library/  plugins/  session/
+ ┗ Dockerfile
 ```
 
-### settings.js (inti)
+GodMode (jika `y`) akan: buat server **`CPANEL RAFZHOST`** → extract zip → isi `settings.js` (PLTA/PLTC/domain/egg) → start.
 
-```js
-global.owner = ["ID_TELEGRAM_ANGKA"]
-global.panelServer = {
-  1: {
-    name: "NamaTampilan",
-    domain: "https://panel.contoh.com",
-    apikey: "ptla_xxxx",
-    capikey: "ptlc_xxxx",
-    egg: "15",
-    nestid: "5",
-    loc: "1"
-  }
-}
-```
-
-GodMode mengisi ini **otomatis** jika kamu pilih pasang bot.
-
-### Jalankan manual (tanpa GodMode)
+Manual:
 
 ```bash
-cd /path/ke/folder-bot
-nano settings.js          # edit manual
-export TELEGRAM_TOKEN='token-dari-BotFather'
-npm install
-npm start
+unzip bot.zip -d bot && cd bot
+# edit settings.js
+export TELEGRAM_TOKEN='token'
+npm install && npm start
 ```
-
-Health check (default): port **7860** → `http://IP:7860/health`
 
 ---
 
 ## 🌐 VPS Tunnelling
 
-Repo terpisah: [Rafflie-CH/vps-tunelling](https://github.com/Rafflie-CH/vps-tunelling)
-
 ```bash
 bash <(curl -s https://raw.githubusercontent.com/Rafflie-CH/vps-tunelling/main/bash.sh)
 ```
 
-Pakai bila perlu tunnel/expose layanan; **bukan** pengganti GodMode/Healer.
+Repo: [Rafflie-CH/vps-tunelling](https://github.com/Rafflie-CH/vps-tunelling) — **bukan** pengganti GodMode/Healer.
 
 ---
 
-## 🗑️ Uninstall & reset
+## 🗑 Uninstall & reset
 
-### Lewat menu GodMode
-
-Jalankan godmode → pilih **2 / 3 / 4 / 5**.
-
-| Opsi | Efek |
-|------|------|
-| 2 Reset VPS | Hapus panel, wings, docker, nginx, mariadb/mysql, redis, sisa file RAFZ — konfirmasi **`YES`** |
-| 3 Panel | Hapus panel + DB `panel` + nginx site panel |
-| 4 Wings | Hapus wings + `/var/lib/pterodactyl` + prune docker |
-| 5 Both | 4 kemudian 3 |
-
-### Lewat environment
+| Menu / Action | Efek |
+|:--------------|:-----|
+| **2** / `reset_vps` | Deep clean total — konfirmasi **`YES`** |
+| **3** / `rm_panel` | Panel + DB + nginx site |
+| **4** / `rm_wings` | Wings + volumes + docker prune |
+| **5** / `rm_both` | 4 lalu 3 |
 
 ```bash
-GODMODE_ACTION=rm_panel bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
-GODMODE_ACTION=rm_wings bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
-GODMODE_ACTION=rm_both  bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
+GODMODE_ACTION=rm_both bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
 ```
-
-`reset_vps` tetap meminta ketik **YES** agar tidak kehapus tanpa sengaja.
 
 ---
 
-## ⚙️ Mode otomatis (tanpa ketik interaktif)
-
-Cocok untuk otomasi / reinstall scripted:
+## ⚙️ Mode otomatis (ENV)
 
 ```bash
 export NONINTERACTIVE=1
@@ -602,106 +595,87 @@ export PANEL_DOMAIN=panel.contoh.com
 export NODE_DOMAIN=node.contoh.com
 export ADMIN_EMAIL=admin@contoh.com
 export ADMIN_USERNAME=admin
-export ADMIN_FIRSTNAME=Admin
-export ADMIN_LASTNAME=Rafz
-export ADMIN_PASSWORD='GantiPasswordIni!'
+export ADMIN_PASSWORD='PasswordKuat!'
 export ALLOC_ALIAS='NODE-01'
 export INSTALL_CPANEL_BOT=n
-# jika bot:
-# export INSTALL_CPANEL_BOT=y
-# export BOT_TOKEN='123:AAF...'
-# export BOT_OWNER_ID='7848360765'
-# export BOT_CF_ENABLE=n
 
 bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
 ```
 
 ---
 
-## 📄 File hasil install & log
+## 📄 File hasil & log
 
-| Lokasi | Isi | Catatan |
-|--------|-----|---------|
-| `/root/ptero_install.log` | Log seluruh proses install | Kirim potongan ini saat lapor error |
-| `/root/rafzhost-panel-data.txt` | URL, user, password, PLTA, PLTC, ID | **Rahasia** — `chmod 600` |
-| `/var/log/rafzhost-ssl-retry.log` | Log percobaan ulang SSL | |
-| `/etc/pterodactyl/config.yml` | Konfigurasi Wings | |
-| `/var/www/pterodactyl` | Kode panel | |
-| `/var/lib/pterodactyl/volumes/...` | File per server (termasuk bot) | |
-
-Lihat data login lagi:
+| Path | Isi |
+|:-----|:----|
+| `/root/ptero_install.log` | Log penuh install |
+| `/root/rafzhost-panel-data.txt` | Login + PLTA/PLTC (**rahasia**) |
+| `/var/log/rafzhost-ssl-retry.log` | Log retry SSL |
+| `/etc/pterodactyl/config.yml` | Config Wings |
+| `/var/www/pterodactyl` | Kode panel |
+| `/var/lib/pterodactyl/volumes/…` | Data server / bot |
 
 ```bash
 cat /root/rafzhost-panel-data.txt
+tail -50 /root/ptero_install.log
 ```
 
 ---
 
-## 🧪 Contoh sesi install end-to-end
+## 🧪 Contoh sesi end-to-end
 
 ```text
 $ ssh root@152.42.223.223
 $ bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
 
-  MENU → 1
+  → Menu [1]
+  → panel.contoh.com / node.contoh.com
+  → admin@gmail.com / admin / ********
+  → Alias: NODE-01 · Bot: n
 
-  Domain Panel: myconsole.rafzhost.my.id
-  Domain Node:  node-myconsole.rafzhost.my.id
-  Email:        admin@gmail.com
-  Username:     admin
-  Password:     ********
-  Alias:        FIXZZ-MARKET
-  Bot CPanel?:  y
-  Token:        8727...:AAF...
-  Owner ID:     7848360765
-  Cloudflare?:  y (isi zone/key atau data uji)
+  … step 01–17 …
 
-  ... (step 01–17) ...
-
-  INSTALLASI SELESAI
-  URL      https://myconsole.rafzhost.my.id
-  Username admin
-  Password ********
-  PLTA     ptla_...
-  PLTC     ptlc_...
-  Egg ID   15
-  Alloc    152.42.223.223:2000-2999 (FIXZZ-MARKET)
+  ✓ INSTALLASI SELESAI
+    URL  https://panel.contoh.com
+    User admin · Pass ********
+    PLTA ptla_… · PLTC ptlc_…
 ```
-
-Browser → login panel → (opsional) cek server **CPANEL RAFZHOST** → chat bot Telegram.
 
 ---
 
 ## ❓ FAQ & error umum
 
 <details>
+<summary><b>CPanel itu cPanel hosting?</b></summary>
+
+<strong>Bukan.</strong> CPanel di sini = <strong>Create Panel</strong> (bot Telegram). Bukan cpanel.net.
+
+</details>
+
+<details>
 <summary><b>Permission denied / bukan root</b></summary>
 
 ```bash
 sudo su
-whoami   # harus root
+whoami   # root
 ```
 
 </details>
 
 <details>
-<summary><b>DNS Panel tidak match</b></summary>
-
-Record A belum ke IP VPS. Cek:
+<summary><b>DNS tidak match</b></summary>
 
 ```bash
-dig +short DOMAIN_PANEL @8.8.8.8
+dig +short DOMAIN @8.8.8.8
 curl -4 ifconfig.me
 ```
 
-Samakan, tunggu propagasi.
+Samakan A record, tunggu propagasi.
 
 </details>
 
 <details>
-<summary><b>Let's Encrypt rate limit / cert gagal</b></summary>
-
-Script akan fallback. Nanti:
+<summary><b>Let's Encrypt rate limit</b></summary>
 
 ```bash
 sudo /usr/local/bin/rafz-ssl-retry
@@ -710,21 +684,20 @@ sudo /usr/local/bin/rafz-ssl-retry
 </details>
 
 <details>
-<summary><b>Wings tidak jalan / Docker error</b></summary>
+<summary><b>Wings / Docker error</b></summary>
+
+Healer menu <strong>05</strong> atau <strong>06</strong>.
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh)
-# coba menu 05 atau 06
 systemctl status wings docker --no-pager
 ```
 
 </details>
 
 <details>
-<summary><b>Bot server status installing / 409</b></summary>
+<summary><b>Bot 409 installing</b></summary>
 
-Tunggu beberapa menit (npm install). Start manual di panel jika perlu.  
-GodMode sudah me-retry otomatis.
+Tunggu npm install egg selesai; start manual di panel jika perlu.
 
 </details>
 
@@ -733,21 +706,13 @@ GodMode sudah me-retry otomatis.
 
 ```bash
 cat /root/rafzhost-panel-data.txt
-# atau
 cd /var/www/pterodactyl && php artisan p:user:change-password
 ```
 
 </details>
 
 <details>
-<summary><b>Mau hapus semua dan mulai bersih</b></summary>
-
-GodMode menu **2** (ketik `YES`) atau Healer menu **02**.
-
-</details>
-
-<details>
-<summary><b>curl: command not found</b></summary>
+<summary><b>curl: not found</b></summary>
 
 ```bash
 apt-get update && apt-get install -y curl
@@ -759,131 +724,142 @@ apt-get update && apt-get install -y curl
 
 ## 🔐 Keamanan
 
-1. Hanya jalankan di **VPS milik sendiri**, sebagai **root**.  
-2. Jangan kirim **password, PLTA, PLTC, token bot** ke grup publik.  
-3. Saat lapor ke [@rafzbotz](https://t.me/rafzbotz), **sensor** rahasia.  
-4. File `/root/rafzhost-panel-data.txt` berisi login — jaga izinnya.  
-5. Ganti password & token jika pernah bocor di screenshot.  
-6. Proyek ini **tidak** terafiliasi resmi dengan Pterodactyl Project.
+| Aturan | |
+|:-------|:--|
+| ✅ | Hanya di VPS milik sendiri, user **root** |
+| ✅ | Sensor password / PLTA / PLTC / token saat lapor |
+| ✅ | `chmod 600 /root/rafzhost-panel-data.txt` |
+| ✅ | Rotasi secret jika pernah bocor di screenshot |
+| ⚠️ | Tidak terafiliasi resmi dengan Pterodactyl Project |
 
 ---
 
 ## 🛣 Progress & roadmap
 
-### ✅ Sudah ada (stabil)
+### ✅ Selesai
 
-- [x] Install Panel + Wings one-liner  
-- [x] Location, Node, Allocation otomatis  
-- [x] SSL unified + penanganan rate limit + cron retry  
+- [x] GodMode one-liner Panel + Wings + Egg  
+- [x] SSL unified + rate-limit + cron retry  
 - [x] Wings native TLS :8080  
-- [x] Egg Nusantara v9 + pengamanan export  
-- [x] Deploy bot Create Panel + generate settings.js  
-- [x] Menu uninstall (4 mode)  
-- [x] UI berwarna  
-- [x] Mode `NONINTERACTIVE`  
-- [x] Healer 01–09 + auto-check  
-- [x] README super detail + kontak Telegram  
+- [x] Egg Nusantara v9 + anti-export  
+- [x] Deploy bot Create Panel  
+- [x] Menu uninstall 4 mode  
+- [x] UI warna + Healer 01–09  
+- [x] Docs + kontak Telegram + tutorial pemula  
 
-### 🚧 Dikerjakan / diperhalus
+### 🚧 Berjalan
 
-- [ ] Start bot tanpa campur tangan manual di semua kondisi edge  
-- [ ] Status progress yang ramah di semua aplikasi SSH HP  
+- [ ] Power-start bot 100% edge-case  
+- [ ] Progress UI ramah SSH mobile  
 - [ ] Deteksi sisa install lebih akurat  
 
 ### 📅 Rencana
 
-- [ ] Multi-node dari satu kali jalan script  
-- [ ] Backup/restore panel satu perintah  
-- [ ] Alert resource ke Telegram/Discord  
-- [ ] Rilis ber-tag + mirror  
+- [ ] Multi-node satu run  
+- [ ] Backup/restore satu perintah  
+- [ ] Alert resource Telegram/Discord  
+- [ ] Release tagged + mirror  
 
 ---
 
 ## 📜 Changelog
 
-### GodMode v3.9
+<details open>
+<summary><b>GodMode v3.9</b></summary>
 
-- Menu uninstall: Reset VPS, Panel, Wings, Both  
-- UI warna (pola Healer), tanpa mengandalkan TTY  
-- Perbaikan spam “loading” di terminal  
-- Retry start bot saat status still installing  
-- Input dipangkas (domain, admin, alias, bot)  
-- Alias allocation custom; IP & port otomatis  
-- ENV non-interactive lengkap  
+- Menu uninstall (reset / panel / wings / both)  
+- UI warna gaya Healer  
+- Perbaikan spam status di terminal  
+- Retry start bot (409)  
+- Input ringkas + alias allocation  
+- ENV non-interactive  
 
-### GodMode v3.6 – v3.8
+</details>
 
-- SSL unified + cron `rafz-ssl-retry`  
-- Patch `.env` & nginx proxy headers  
-- Integrasi deploy bot.zip  
+<details>
+<summary><b>GodMode v3.3 – v3.8</b></summary>
 
-### GodMode v3.3 – v3.5
-
-- Patch mixed content / trusted proxies  
-- Force reinstall sisa Wings  
+- SSL unified + `rafz-ssl-retry`  
+- Patch `.env` / nginx proxy headers  
+- Integrasi bot.zip  
 - Verifikasi panel ↔ wings  
 
-### Healer v3.5
+</details>
+
+<details>
+<summary><b>Healer v3.5</b></summary>
 
 - Auto-check overload & nginx abort  
-- Deep clean, docker socket, ciduk hama, rate-limit flush  
+- Deep clean, docker socket, ciduk hama, rate-limit  
 - UI cyberpunk  
 
-### Awal
-
-- Integrasi pterodactyl-installer upstream  
-- Distribusi one-liner GitHub  
+</details>
 
 ---
 
-## 📬 Kontak & dukungan
+## 💡 Filosofi, kisah & pesan mandiri
 
-| Platform | Akun | Kegunaan |
-|----------|------|----------|
-| Telegram (akun) | [**@rafzbotz**](https://t.me/rafzbotz) | **Lapor error**, tanya teknis, bantuan script |
-| Telegram (channel) | [**@rafzch**](https://t.me/rafzch) | Testimoni, produk yang dijual, info |
-| Telegram (channel) | [**@rafzhost**](https://t.me/rafzhost) | Jam kerja, partner, pengumuman resmi |
-| GitHub Issues | [Panel-Healer Issues](https://github.com/Rafflie-CH/Panel-Healer/issues) | Bug report berbahasa teknis / PR |
+<p align="center">
 
-**Template lapor error ke @rafzbotz:**
+> *Bahkan malam yang dulu untuk terlelap,*  
+> *sekarang jadi saksi lelahnya kepala merajut setiap tahap.*  
+> *Bahkan game yang terasa seru ku mainkan,*  
+> *sekarang hanya menjadi bahan menunggu hasil kodingan.*
 
-```text
-1. Perintah yang dijalankan:
-2. OS VPS (Ubuntu …):
-3. Screenshot terminal:
-4. Output: tail -50 /root/ptero_install.log
-5. Domain panel/node (opsional):
-(Jangan kirim password & token bot)
-```
+</p>
+
+### Kisah di balik layar
+
+Semua ini **tidak** dibangun semalam dan **tidak** lewat jalan instan.
+
+Dari **SD** mengulik bot sederhana, **SMP** merakit skrip bot, hingga **SMK** membangun **RAFZHOST** dan automation **God Mode** — di balik barisan bash ada malam panjang, tugas sekolah, aturan ketat, dan *trial-error* tanpa henti.
+
+Koding di sini latihan mental: **jangan mudah menyerah**.
+
+### Pesan: jadilah mandiri
+
+Jangan takut salah. Jangan ragu pecahkan masalah sendiri.
+
+**AI bukan penyuap instan** — ia partner diskusi saat kepala buntu.  
+Tangan dan kepalamu yang merajut kode. Jangan hanya penonton atau pembeli jadi yang manja.
+
+Ngulik. Baca docs. Baca error terminal. Bangun kemandirian.
+
+Kepuasan terbesar di IT: **bukan** kode yang mulus tanpa usaha — melainkan error paling bandel yang **kamu jinakkan sendiri**.
+
+Sudah mencoba sungguh-sungguh? Baru tanya [@rafzbotz](https://t.me/rafzbotz) — bawa log dan cerita apa yang sudah dicoba.
 
 ---
 
 ## 🙏 Credits
 
-- **Author / maintainer:** [Rafflie-CH](https://github.com/Rafflie-CH) (RAFZ)  
-- **Brand:** RAFZHOST × DEKZYMARKET  
-- **Upstream panel installer:** [pterodactyl-installer](https://github.com/pterodactyl-installer/pterodactyl-installer)  
-- **Panel software:** [Pterodactyl](https://pterodactyl.io/)  
+| | |
+|:--|:--|
+| **Author** | [Rafflie-CH](https://github.com/Rafflie-CH) (RAFZ) |
+| **Brand** | **RAFZHOST × DEKZYMARKET** |
+| **Upstream** | [pterodactyl-installer](https://github.com/pterodactyl-installer/pterodactyl-installer) |
+| **Panel** | [Pterodactyl](https://pterodactyl.io/) |
+| **Issues** | [github.com/Rafflie-CH/Panel-Healer/issues](https://github.com/Rafflie-CH/Panel-Healer/issues) |
 
 ---
 
-<div align="center">
+<p align="center">
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=18&duration=3000&pause=1000&color=22D3EE&center=true&vCenter=true&width=600&lines=Salin+perintah+di+bawah+%E2%80%94+tempel+di+VPS+root" alt="hint" />
+</p>
 
-### ⚡ Salin perintah (terpisah)
-
-**Install panel**
+### ⚡ GodMode
 
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/godmode.sh)
 ```
 
-**Heal panel**
+### 🩺 Healer
 
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/healer.sh)
 ```
 
-**VPS tunnel**
+### 🌐 Tunnel
 
 ```bash
 bash <(curl -s https://raw.githubusercontent.com/Rafflie-CH/vps-tunelling/main/bash.sh)
@@ -891,10 +867,21 @@ bash <(curl -s https://raw.githubusercontent.com/Rafflie-CH/vps-tunelling/main/b
 
 <br/>
 
-[![@rafzbotz](https://img.shields.io/badge/Lapor_error-@rafzbotz-26A5E4?style=for-the-badge&logo=telegram)](https://t.me/rafzbotz)
-[![@rafzch](https://img.shields.io/badge/Channel-@rafzch-26A5E4?style=for-the-badge&logo=telegram)](https://t.me/rafzch)
-[![@rafzhost](https://img.shields.io/badge/Info-@rafzhost-26A5E4?style=for-the-badge&logo=telegram)](https://t.me/rafzhost)
+<p align="center">
+  <a href="https://t.me/rafzbotz"><img src="https://img.shields.io/badge/🆘_Lapor_Error-@rafzbotz-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" /></a>
+  <a href="https://t.me/rafzch"><img src="https://img.shields.io/badge/📢_@rafzch-0088cc?style=for-the-badge&logo=telegram&logoColor=white" /></a>
+  <a href="https://t.me/rafzhost"><img src="https://img.shields.io/badge/ℹ️_@rafzhost-229ED9?style=for-the-badge&logo=telegram&logoColor=white" /></a>
+</p>
 
-**RAFZHOST × DEKZYMARKET** · Made for Indonesian hosting community ⚡
+<p align="center">
+  <img src="https://img.shields.io/badge/★_Star_this_repo-if_it_helped_you-a855f7?style=for-the-badge&logo=github&logoColor=white" alt="star" />
+</p>
 
-</div>
+<p align="center">
+  <b>RAFZHOST × DEKZYMARKET</b><br/>
+  <i>Made with ⚡ for the Indonesian hosting community</i>
+</p>
+
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=A855F7&height=100&section=footer&text=Panel-Healer&fontSize=28&fontColor=fff&animation=fadeIn" alt="footer" />
+</p>
