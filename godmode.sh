@@ -13,6 +13,7 @@
 #   4. AUTO-REUSE: kalau cert existing sudah cover kedua domain, dipakai ulang.
 #   5. Wings TIDAK fallback ke self-signed kecuali terpaksa (browser hijau).
 #   6. Verifikasi cert coverage (SAN) + warning kritis di akhir.
+# v3.9 — Menu uninstall: Reset VPS (deep clean), Panel only, Wings only, Both
 # =========================================================================
 # v3.3 — AUTO-PATCH panel .env (TRUSTED_PROXIES, SESSION_SECURE_COOKIE) +
 #        nginx panel (HTTP_X_FORWARDED_PROTO) + verifikasi mixed content.
@@ -42,25 +43,68 @@ touch "$LOG_FILE"
 chmod 600 "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-banner()  { echo "========================================================="; printf ' %-55s\n' "$1"; echo "========================================================="; }
-ok()      { echo "[✓] $1"; }
-info()    { echo "[*] $1"; }
-warn()    { echo "[!] $1"; }
-crit()    { echo "[‼] $1"; }
+# ── Warna (auto-off kalau bukan TTY / NO_COLOR) ──
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    C_RESET='\033[0m'
+    C_BOLD='\033[1m'
+    C_DIM='\033[2m'
+    C_RED='\033[1;31m'
+    C_GRN='\033[1;32m'
+    C_YLW='\033[1;33m'
+    C_BLU='\033[1;34m'
+    C_MAG='\033[1;35m'
+    C_CYN='\033[1;36m'
+    C_WHT='\033[1;37m'
+    C_GRY='\033[0;90m'
+else
+    C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GRN=''; C_YLW=''
+    C_BLU=''; C_MAG=''; C_CYN=''; C_WHT=''; C_GRY=''
+fi
+
+_line() { printf "${C_GRY}%s${C_RESET}\n" "────────────────────────────────────────────────────────────"; }
+_dline(){ printf "${C_CYN}%s${C_RESET}\n" "════════════════════════════════════════════════════════════"; }
+
+banner() {
+    echo
+    _dline
+    printf "  ${C_BOLD}${C_CYN}%-56s${C_RESET}\n" "$1"
+    _dline
+    echo
+}
+
+ok()   { printf "  ${C_GRN}[✓]${C_RESET} %s\n" "$1"; }
+info() { printf "  ${C_BLU}[*]${C_RESET} %s\n" "$1"; }
+warn() { printf "  ${C_YLW}[!]${C_RESET} %s\n" "$1"; }
+crit() { printf "  ${C_RED}[‼]${C_RESET} %s\n" "$1"; }
+
+status_row() {
+    # status_row "Label" "value" "ok|warn|bad|dim"
+    local lab="$1" val="$2" kind="${3:-dim}"
+    local col="$C_GRY"
+    case "$kind" in
+        ok)   col="$C_GRN" ;;
+        warn) col="$C_YLW" ;;
+        bad)  col="$C_RED" ;;
+        info) col="$C_CYN" ;;
+    esac
+    printf "  ${C_WHT}%-10s${C_RESET} ${col}%s${C_RESET}\n" "$lab" "$val"
+}
 
 STEP="Inisialisasi"
 error_exit() {
     local rc=${1:-1} msg="${2:-Unknown error}"
     echo
-    echo "========================================================="
-    echo " INSTALLER GAGAL"
-    echo "========================================================="
-    echo "Step      : ${STEP:-Tidak diketahui}"
-    echo "Exit code : $rc"
-    echo "Pesan     : $msg"
-    echo "Log       : $LOG_FILE"
-    tail -25 "$LOG_FILE" 2>/dev/null || true
-    echo "========================================================="
+    _dline
+    printf "  ${C_RED}${C_BOLD}INSTALLER GAGAL${C_RESET}\n"
+    _dline
+    printf "  ${C_WHT}Step${C_RESET}       : ${C_YLW}%s${C_RESET}\n" "${STEP:-Tidak diketahui}"
+    printf "  ${C_WHT}Exit code${C_RESET}  : ${C_RED}%s${C_RESET}\n" "$rc"
+    printf "  ${C_WHT}Pesan${C_RESET}      : %s\n" "$msg"
+    printf "  ${C_WHT}Log${C_RESET}        : ${C_DIM}%s${C_RESET}\n" "$LOG_FILE"
+    echo
+    printf "  ${C_GRY}── 25 baris terakhir log ──${C_RESET}\n"
+    tail -25 "$LOG_FILE" 2>/dev/null | sed 's/^/  /' || true
+    _dline
     exit "$rc"
 }
 trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
@@ -70,11 +114,25 @@ trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
 # =========================================================================
 ask() {
     local __var="$1" __prompt="$2" __def="${3:-}" __secret="${4:-0}" __val=""
+    if [[ "${NONINTERACTIVE:-0}" == "1" ]] || [[ ! -t 0 && ! -e /dev/tty ]]; then
+        __val="$__def"
+        if [[ "$__secret" == "1" ]]; then info "${__prompt}: ******** ${C_GRY}(auto)${C_RESET}"
+        else info "${__prompt}: ${__val:-(kosong)} ${C_GRY}(auto)${C_RESET}"; fi
+        printf -v "$__var" '%s' "$__val"
+        return 0
+    fi
     if [[ -n "$__def" ]]; then
-        if [[ "$__secret" == "1" ]]; then printf "%s [tersimpan]: " "$__prompt"
-        else printf "%s [%s]: " "$__prompt" "$__def"; fi
-    else printf "%s: " "$__prompt"; fi
-    if ! read -r __val 2>/dev/null < /dev/tty; then __val=""; fi
+        if [[ "$__secret" == "1" ]]; then
+            printf "  ${C_CYN}?${C_RESET} ${C_WHT}%s${C_RESET} ${C_GRY}[****]${C_RESET}: " "$__prompt"
+        else
+            printf "  ${C_CYN}?${C_RESET} ${C_WHT}%s${C_RESET} ${C_GRY}[%s]${C_RESET}: " "$__prompt" "$__def"
+        fi
+    else
+        printf "  ${C_CYN}?${C_RESET} ${C_WHT}%s${C_RESET}: " "$__prompt"
+    fi
+    if ! read -r __val 2>/dev/null < /dev/tty; then
+        if ! read -r __val 2>/dev/null; then __val=""; fi
+    fi
     [[ -z "$__val" ]] && __val="$__def"
     printf -v "$__var" '%s' "$__val"
 }
@@ -128,21 +186,187 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST - GOD MODE INSTALLER v3.7"
+# Header
 echo
-echo "----- STATUS SISTEM -----"
-echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
-if [[ $WINGS_CONFIG -eq 1 ]]; then echo "Wings  : SUDAH TERPASANG"
-elif [[ $WINGS_BINARY -eq 1 ]]; then echo "Wings  : SISA BINARY (akan di-setup ulang)"
-else echo "Wings  : BELUM"; fi
-command -v docker >/dev/null 2>&1 && echo "Docker : SUDAH TERPASANG" || echo "Docker : BELUM"
-echo "-------------------------"
+_dline
+printf "  ${C_BOLD}${C_MAG}RAFZHOST${C_RESET} ${C_GRY}x${C_RESET} ${C_BOLD}${C_CYN}DEKZYMARKET${C_RESET}\n"
+printf "  ${C_WHT}GOD MODE INSTALLER${C_RESET}  ${C_GRY}v3.9${C_RESET}\n"
+printf "  ${C_DIM}Panel · Wings · Egg · CPanel Bot · SSL Unified${C_RESET}\n"
+_dline
 echo
+
+# Status box
+printf "  ${C_BOLD}${C_WHT}STATUS SISTEM${C_RESET}\n"
+_line
+if [[ $PANEL_INSTALLED -eq 1 ]]; then
+    status_row "Panel" "SUDAH TERPASANG" ok
+else
+    status_row "Panel" "BELUM" bad
+fi
+if [[ $WINGS_CONFIG -eq 1 ]]; then
+    status_row "Wings" "SUDAH TERPASANG" ok
+elif [[ $WINGS_BINARY -eq 1 ]]; then
+    status_row "Wings" "SISA BINARY (akan di-setup ulang)" warn
+else
+    status_row "Wings" "BELUM" bad
+fi
+if command -v docker >/dev/null 2>&1; then
+    status_row "Docker" "SUDAH TERPASANG" ok
+else
+    status_row "Docker" "BELUM" bad
+fi
+_line
+echo
+
+# =========================================================================
+# 00c2 MENU UTAMA (install / uninstall)
+# =========================================================================
+GODMODE_ACTION="${GODMODE_ACTION:-}"
+if [[ -z "$GODMODE_ACTION" && "${NONINTERACTIVE:-0}" != "1" ]]; then
+    printf "  ${C_BOLD}${C_WHT}MENU${C_RESET}\n"
+    _line
+    printf "  ${C_GRN}[1]${C_RESET}  Install Panel + Wings + Egg ${C_GRY}(God Mode)${C_RESET}\n"
+    echo
+    printf "  ${C_YLW}[2]${C_RESET}  Uninstall — Reset VPS ${C_GRY}(Deep Clean total)${C_RESET}\n"
+    printf "  ${C_YLW}[3]${C_RESET}  Uninstall Panel saja\n"
+    printf "  ${C_YLW}[4]${C_RESET}  Uninstall Wings / Node saja\n"
+    printf "  ${C_YLW}[5]${C_RESET}  Uninstall Panel + Wings\n"
+    _line
+    echo
+    ask _menu "Pilih opsi" "1"
+    echo
+    case "${_menu}" in
+        2) GODMODE_ACTION="reset_vps" ;;
+        3) GODMODE_ACTION="rm_panel" ;;
+        4) GODMODE_ACTION="rm_wings" ;;
+        5) GODMODE_ACTION="rm_both" ;;
+        *) GODMODE_ACTION="install" ;;
+    esac
+elif [[ -z "$GODMODE_ACTION" ]]; then
+    GODMODE_ACTION="install"
+fi
+
+do_rm_panel() {
+    info "Menghapus Panel..."
+    systemctl disable --now pteroq 2>/dev/null || true
+    rm -f /etc/systemd/system/pteroq.service
+    # cron panel
+    crontab -l 2>/dev/null | grep -vF 'php /var/www/pterodactyl/artisan schedule:run' | crontab - 2>/dev/null || true
+    crontab -l 2>/dev/null | grep -vF 'rafz-ssl-retry' | crontab - 2>/dev/null || true
+    rm -rf /var/www/pterodactyl /usr/local/bin/composer
+    # nginx site
+    [[ -L /etc/nginx/sites-enabled/pterodactyl.conf ]] && unlink /etc/nginx/sites-enabled/pterodactyl.conf 2>/dev/null || true
+    rm -f /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/conf.d/pterodactyl.conf 2>/dev/null || true
+    [[ -f /etc/nginx/sites-available/default ]] && [[ ! -L /etc/nginx/sites-enabled/default ]] &&         ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default 2>/dev/null || true
+    systemctl restart nginx 2>/dev/null || true
+    # DB panel (auto-drop if named panel)
+    if command -v mariadb >/dev/null 2>&1 || command -v mysql >/dev/null 2>&1; then
+        local _dbcli=mariadb
+        command -v mariadb >/dev/null 2>&1 || _dbcli=mysql
+        if $_dbcli -u root -e "USE panel;" >/dev/null 2>&1; then
+            $_dbcli -u root -e "DROP DATABASE panel;" 2>/dev/null || true
+            $_dbcli -u root -e "DROP USER IF EXISTS 'pterodactyl'@'127.0.0.1';" 2>/dev/null || true
+            ok "Database panel dihapus."
+        else
+            warn "DB 'panel' tidak ketemu — skip drop DB (hapus manual jika perlu)."
+        fi
+    fi
+    systemctl disable --now redis-server 2>/dev/null || systemctl disable --now redis 2>/dev/null || true
+    ok "Panel dihapus."
+}
+
+do_rm_wings() {
+    info "Menghapus Wings / Node..."
+    systemctl disable --now wings 2>/dev/null || true
+    rm -f /etc/systemd/system/wings.service
+    systemctl daemon-reload 2>/dev/null || true
+    if command -v docker >/dev/null 2>&1; then
+        docker stop $(docker ps -aq) 2>/dev/null || true
+        docker system prune -a -f 2>/dev/null || true
+    fi
+    rm -rf /etc/pterodactyl /usr/local/bin/wings /var/lib/pterodactyl
+    ok "Wings / Node dihapus."
+}
+
+do_reset_vps() {
+    banner "RESET VPS — DEEP CLEAN"
+    warn "Ini menghapus TOTAL: Panel, Wings, Docker, Nginx, MariaDB/MySQL, Redis, PHP residual."
+    ask _y "Ketik YES untuk konfirmasi wipe total" ""
+    [[ "$_y" == "YES" ]] || error_exit 1 "Dibatalkan."
+    set +e
+    trap - ERR
+    systemctl stop wings pteroq nginx mysql mariadb redis-server redis 2>/dev/null || true
+    killall -9 nginx mariadb mysqld redis-server 2>/dev/null || true
+    systemctl disable wings pteroq nginx mysql mariadb redis-server redis 2>/dev/null || true
+    rm -f /etc/systemd/system/wings.service /etc/systemd/system/pteroq.service
+    if command -v docker >/dev/null 2>&1; then
+        docker stop $(docker ps -aq) 2>/dev/null || true
+        docker rm $(docker ps -aq) 2>/dev/null || true
+        docker rmi $(docker images -q) 2>/dev/null || true
+    fi
+    apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
+    rm -rf /var/lib/docker /etc/docker /var/www/pterodactyl /etc/pterodactyl /var/log/pterodactyl /etc/wings
+    apt-get purge -y 'nginx*' 'mysql-*' 'mariadb-*' 'php8.3*' 'php8.2*' 'php-fpm*' 'redis-*' 2>/dev/null || true
+    apt-get autoremove -y 2>/dev/null || true
+    apt-get clean 2>/dev/null || true
+    rm -rf /var/lib/mysql /var/lib/mariadb /etc/mysql /var/log/nginx /etc/nginx /var/lib/redis
+    rm -rf /root/.rafz-ptero-installer /root/rafzhost-panel-data.txt /root/ptero_install.log
+    rm -f /usr/local/bin/rafz-ssl-retry /etc/rafzhost-ssl.conf /var/log/rafzhost-ssl-retry.log
+    crontab -l 2>/dev/null | grep -vF 'pterodactyl' | grep -vF 'rafz-ssl' | crontab - 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl reset-failed 2>/dev/null || true
+    set -e
+    trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
+    ok "Deep clean selesai — VPS relatif bersih seperti fresh."
+}
+
+case "$GODMODE_ACTION" in
+    reset_vps)
+        do_reset_vps
+        exit 0
+        ;;
+    rm_panel)
+        ask _y "Yakin hapus PANEL saja? (y/n)" "n"
+        [[ "${_y,,}" =~ ^(y|yes|ya)$ ]] || error_exit 1 "Dibatalkan."
+        set +e; trap - ERR
+        do_rm_panel
+        set -e
+        trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
+        ok "Selesai uninstall panel."
+        exit 0
+        ;;
+    rm_wings)
+        ask _y "Yakin hapus WINGS/NODE saja? (y/n)" "n"
+        [[ "${_y,,}" =~ ^(y|yes|ya)$ ]] || error_exit 1 "Dibatalkan."
+        set +e; trap - ERR
+        do_rm_wings
+        set -e
+        trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
+        ok "Selesai uninstall wings."
+        exit 0
+        ;;
+    rm_both)
+        ask _y "Yakin hapus PANEL + WINGS? (y/n)" "n"
+        [[ "${_y,,}" =~ ^(y|yes|ya)$ ]] || error_exit 1 "Dibatalkan."
+        set +e; trap - ERR
+        do_rm_wings
+        do_rm_panel
+        set -e
+        trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
+        ok "Selesai uninstall panel + wings."
+        exit 0
+        ;;
+    install|*)
+        printf "  ${C_GRN}${C_BOLD}>> Mode: INSTALL${C_RESET}\n"; echo
+        ;;
+esac
 
 # =========================================================================
 # 00d KUMPUL INPUT
 # =========================================================================
-info "Isi data di bawah (tekan Enter untuk pakai nilai dalam kurung)."
+printf "  ${C_BOLD}${C_WHT}KONFIGURASI${C_RESET}\n"
+_line
+printf "  ${C_GRY}Enter = pakai default di dalam kurung [ ]${C_RESET}\n"
 echo
 ask PANEL_DOMAIN "Domain Panel" "$PANEL_DOMAIN"
 ask NODE_DOMAIN "Domain Node" "$NODE_DOMAIN"
@@ -154,31 +378,31 @@ ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
 # Alias allocation saja yang di-custom; IP=VPS, port=2000-2999, location & hostname auto
 ask ALLOC_ALIAS "Alias Allocation (kosong = nama node)" "${ALLOC_ALIAS:-}"
 
-INSTALL_CPANEL_BOT="n"
-BOT_TOKEN=""
-BOT_OWNER_ID=""
-BOT_CF_ENABLE="n"
-BOT_CF_DOMAIN=""
-BOT_CF_ZONE=""
-BOT_CF_APIKEY=""
+INSTALL_CPANEL_BOT="${INSTALL_CPANEL_BOT:-n}"
+BOT_TOKEN="${BOT_TOKEN:-}"
+BOT_OWNER_ID="${BOT_OWNER_ID:-}"
+BOT_CF_ENABLE="${BOT_CF_ENABLE:-n}"
+BOT_CF_DOMAIN="${BOT_CF_DOMAIN:-}"
+BOT_CF_ZONE="${BOT_CF_ZONE:-}"
+BOT_CF_APIKEY="${BOT_CF_APIKEY:-}"
 echo
-ask _cp_yn "Setelah install, langsung pasang bot CPanel? (y/n)" "n"
+ask _cp_yn "Setelah install, langsung pasang bot CPanel? (y/n)" "${INSTALL_CPANEL_BOT:-n}"
 case "${_cp_yn,,}" in
     y|yes|ya) INSTALL_CPANEL_BOT="y" ;;
     *) INSTALL_CPANEL_BOT="n" ;;
 esac
 if [[ "$INSTALL_CPANEL_BOT" == "y" ]]; then
-    ask BOT_TOKEN "Token Bot Telegram (BotFather)" ""
-    ask BOT_OWNER_ID "ID Owner utama / creator (Telegram numeric ID)" ""
-    ask _cf_yn "Ada konfigurasi subdomain Cloudflare? (y/n)" "n"
+    ask BOT_TOKEN "Token Bot Telegram (BotFather)" "${BOT_TOKEN:-}"
+    ask BOT_OWNER_ID "ID Owner utama / creator (Telegram numeric ID)" "${BOT_OWNER_ID:-}"
+    ask _cf_yn "Ada konfigurasi subdomain Cloudflare? (y/n)" "${BOT_CF_ENABLE:-n}"
     case "${_cf_yn,,}" in
         y|yes|ya) BOT_CF_ENABLE="y" ;;
         *) BOT_CF_ENABLE="n" ;;
     esac
     if [[ "$BOT_CF_ENABLE" == "y" ]]; then
-        ask BOT_CF_DOMAIN "Domain Cloudflare (contoh: rafzhost.my.id)" ""
-        ask BOT_CF_ZONE "Cloudflare Zone ID" ""
-        ask BOT_CF_APIKEY "Cloudflare API Token / Key" ""
+        ask BOT_CF_DOMAIN "Domain Cloudflare (contoh: rafzhost.my.id)" "${BOT_CF_DOMAIN:-}"
+        ask BOT_CF_ZONE "Cloudflare Zone ID" "${BOT_CF_ZONE:-}"
+        ask BOT_CF_APIKEY "Cloudflare API Token / Key" "${BOT_CF_APIKEY:-}"
     fi
     [[ -n "$BOT_TOKEN" ]] || error_exit 1 "Token bot wajib diisi jika pasang CPanel bot."
     [[ -n "$BOT_OWNER_ID" ]] || error_exit 1 "ID Owner Telegram wajib diisi."
@@ -232,7 +456,7 @@ else
 fi
 
 LOCATION_SHORT="${LOCATION_SHORT:-RafzHost}"
-LOCATION_LONG="${LOCATION_LONG:-RAFZHOST INDONESIA}"
+LOCATION_LONG="${LOCATION_LONG:-RAFZHOST Indonesia}"
 NODE_NAME="RAFZHOST-NODE"
 NODE_DESCRIPTION="RAFZHOST Pterodactyl Node"
 ALLOCATION_START="2000"
@@ -1449,13 +1673,17 @@ SRV_BODY="$(jq -nc \
     limits: {memory: $mem, swap: 0, disk: $disk, io: 500, cpu: $cpu},
     feature_limits: {databases: 5, allocations: 5, backups: 5},
     allocation: {default: $alloc},
-    start_on_completion: false
+    start_on_completion: true
   }')"
 
 info "Membuat server panel: $BOT_SERVER_NAME (owner admin id=$ADMIN_ID)..."
 SRV_RAW="$(api_req POST "$API_BASE/servers" "$SRV_BODY" 2>&1)" || true
 BOT_SERVER_ID="$(printf '%s' "$SRV_RAW" | jq -r '.attributes.id // empty' 2>/dev/null || true)"
 BOT_SERVER_UUID="$(printf '%s' "$SRV_RAW" | jq -r '.attributes.uuid // empty' 2>/dev/null || true)"
+BOT_IDENTIFIER="$(printf '%s' "$SRV_RAW" | jq -r '.attributes.identifier // empty' 2>/dev/null || true)"
+if [[ -z "$BOT_IDENTIFIER" || "$BOT_IDENTIFIER" == "null" ]]; then
+    BOT_IDENTIFIER="${BOT_SERVER_UUID:0:8}"
+fi
 if [[ -z "$BOT_SERVER_ID" || "$BOT_SERVER_ID" == "null" ]]; then
     echo "$SRV_RAW" | head -30
     error_exit 1 "Gagal create server CPanel bot: $(api_error "$SRV_RAW")"
@@ -1583,28 +1811,50 @@ chown -R 999:999 "$VOLUME_DIR" 2>/dev/null || true
 chmod 600 "$VOLUME_DIR/session/creds.json" "$VOLUME_DIR/settings.js" 2>/dev/null || true
 ok "settings.js + session token siap."
 
+# Power start: SELALU soft-fail (jangan jatuhkan installer)
 set +e
-api_req POST "$API_BASE/servers/$BOT_SERVER_ID/unsuspend" '{}' >/dev/null 2>&1
-set -e
+trap - ERR
+api_req POST "$API_BASE/servers/$BOT_SERVER_ID/unsuspend" '{}' >/dev/null 2>&1 || true
 
-info "Menyalakan server bot..."
-BOT_IDENTIFIER="$(api_req GET "$API_BASE/servers/$BOT_SERVER_ID" | jq -r '.attributes.identifier // empty')"
-if [[ -n "$BOT_IDENTIFIER" && -n "$PLTC" ]]; then
-    set +e
-    curl -fsSk --max-time 30 \
-      -H "Authorization: Bearer $PLTC" \
-      -H "Accept: application/json" \
-      -H "Content-Type: application/json" \
-      -X POST -d '{"signal":"start"}' \
-      "https://${PANEL_DOMAIN}/api/client/servers/${BOT_IDENTIFIER}/power" >/dev/null 2>&1
-    POWER_RC=$?
-    set -e
-    [[ $POWER_RC -eq 0 ]] && ok "Signal START terkirim ($BOT_IDENTIFIER)" || warn "Power start gagal — nyalakan manual di panel."
+if [[ -z "${BOT_IDENTIFIER:-}" || "$BOT_IDENTIFIER" == "null" ]]; then
+    BOT_IDENTIFIER="$(printf '%s' "$(api_req GET "$API_BASE/servers/$BOT_SERVER_ID" 2>/dev/null || true)" | jq -r '.attributes.identifier // empty' 2>/dev/null || true)"
+fi
+[[ -z "${BOT_IDENTIFIER:-}" || "$BOT_IDENTIFIER" == "null" ]] && BOT_IDENTIFIER="${BOT_SERVER_UUID:0:8}"
+
+info "Menunggu install script server selesai (max ~3 menit)..."
+for _w in $(seq 1 36); do
+    _st="$(curl -sk --max-time 10 -H "Authorization: Bearer ${PLTA}" -H "Accept: application/json"       "https://${PANEL_DOMAIN}/api/application/servers/${BOT_SERVER_ID}" 2>/dev/null       | jq -r '.attributes.container.installed // .attributes.status // empty' 2>/dev/null || true)"
+    # installed=1 or status not installing
+    if [[ "$_st" == "1" || "$_st" == "true" ]]; then
+        ok "Server install selesai."
+        break
+    fi
+    sleep 5
+done
+
+info "Menyalakan server bot (identifier=${BOT_IDENTIFIER:-?})..."
+POWER_OK=0
+if [[ -n "${BOT_IDENTIFIER:-}" && -n "${PLTC:-}" ]]; then
+    for _try in 1 2 3 4 5; do
+        for _url in           "https://${PANEL_DOMAIN}/api/client/servers/${BOT_IDENTIFIER}/power"           "https://127.0.0.1/api/client/servers/${BOT_IDENTIFIER}/power"
+        do
+            _code="$(curl -sk --max-time 20 -o /tmp/rafz-power.out -w '%{http_code}'               -H "Host: ${PANEL_DOMAIN}"               -H "Authorization: Bearer ${PLTC}"               -H "Accept: application/json"               -H "Content-Type: application/json"               -X POST -d '{"signal":"start"}'               "$_url" 2>/dev/null || echo 000)"
+            if [[ "$_code" == "204" || "$_code" == "200" || "$_code" == "202" ]]; then
+                POWER_OK=1
+                break 2
+            fi
+        done
+        sleep 8
+    done
+fi
+if [[ $POWER_OK -eq 1 ]]; then
+    ok "Signal START terkirim ($BOT_IDENTIFIER)"
 else
-    warn "Identifier/PLTC kosong — start manual di panel."
+    warn "Power start API gagal/pending — start manual di panel: $BOT_SERVER_NAME"
+    warn "settings.js + bot files sudah OK di volume (installer lanjut)."
 fi
 
-rm -rf /tmp/rafz-bot-deploy
+rm -rf /tmp/rafz-bot-deploy /tmp/rafz-power.out
 echo
 ok "Bot CPanel siap."
 echo "  Server : $BOT_SERVER_NAME (ID $BOT_SERVER_ID)"
@@ -1613,6 +1863,11 @@ echo "  Panel  : https://$PANEL_DOMAIN"
 echo "  Name   : $PANEL_NAME_SAFE"
 [[ "${BOT_CF_ENABLE:-n}" == "y" ]] && echo "  CF     : $BOT_CF_DOMAIN"
 echo
+
+# Kembalikan ERR trap + pipefail
+trap 'rc=$?; error_exit "$rc" "Command gagal di step: ${STEP:-unknown}"' ERR
+set -e
+
 else
 info "Skip deploy bot CPanel."
 fi
@@ -1659,12 +1914,24 @@ STEP="Validasi akhir"
 systemctl restart pteroq >/dev/null 2>&1 || true
 systemctl restart nginx >/dev/null 2>&1 || true
 echo
-echo "===== SERVICE STATUS ====="
+printf "  ${C_BOLD}${C_WHT}SERVICE STATUS${C_RESET}\n"
+_line
 for s in nginx mariadb redis-server pteroq docker wings; do
-    echo "$(printf '%-10s' "$s"): $(systemctl is-active $s || true)"
+    st="$(systemctl is-active $s 2>/dev/null || echo inactive)"
+    if [[ "$st" == "active" ]]; then
+        printf "  ${C_GRY}%-12s${C_RESET} ${C_GRN}%s${C_RESET}\n" "$s" "$st"
+    else
+        printf "  ${C_GRY}%-12s${C_RESET} ${C_RED}%s${C_RESET}\n" "$s" "$st"
+    fi
 done
 PANEL_CODE="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$PANEL_DOMAIN" || echo 000)"
-echo "Panel HTTP : $PANEL_CODE"
+if [[ "$PANEL_CODE" =~ ^[23] ]]; then
+    printf "  ${C_GRY}%-12s${C_RESET} ${C_GRN}%s${C_RESET}\n" "Panel HTTP" "$PANEL_CODE"
+else
+    printf "  ${C_GRY}%-12s${C_RESET} ${C_YLW}%s${C_RESET}\n" "Panel HTTP" "$PANEL_CODE"
+fi
+_line
+echo
 [[ "$PANEL_CODE" == "200" || "$PANEL_CODE" == "302" ]] || warn "Panel HTTP code tidak normal: $PANEL_CODE"
 
 # =========================================================================
@@ -1726,50 +1993,59 @@ else
 fi
 echo
 
-banner "INSTALLASI SELESAI"
 echo
-echo "========================================="
-echo "  DATA LOGIN PANEL"
-echo "========================================="
-echo " URL      : https://$PANEL_DOMAIN"
-echo " Email    : $ADMIN_EMAIL"
-echo " Username : $ADMIN_USERNAME"
-echo " Password : $ADMIN_PASSWORD"
-echo "========================================="
+_dline
+printf "  ${C_GRN}${C_BOLD}INSTALLASI SELESAI${C_RESET}\n"
+_dline
 echo
-echo "========================================="
-echo "  API KEYS"
-echo "========================================="
-echo " PLTA     : $PLTA"
-echo " PLTC     : ${PLTC:-(gagal dibuat — buat manual di panel)}"
-echo "========================================="
+
+printf "  ${C_BOLD}${C_WHT}DATA LOGIN PANEL${C_RESET}\n"
+_line
+printf "  ${C_GRY}%-12s${C_RESET} ${C_CYN}https://%s${C_RESET}\n" "URL" "$PANEL_DOMAIN"
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "Email" "$ADMIN_EMAIL"
+printf "  ${C_GRY}%-12s${C_RESET} ${C_WHT}%s${C_RESET}\n" "Username" "$ADMIN_USERNAME"
+printf "  ${C_GRY}%-12s${C_RESET} ${C_YLW}%s${C_RESET}\n" "Password" "$ADMIN_PASSWORD"
+_line
 echo
-echo "========================================="
-echo "  NODE / IDS"
-echo "========================================="
-echo " Node URL : https://$NODE_DOMAIN:$DAEMON_PORT (TLS native)"
-echo " Location : $LOCATION_ID"
-echo " Node ID  : $NODE_ID"
-echo " Nest ID  : $NEST_ID"
-echo " Egg ID   : $EGG_ID"
-echo " Alloc    : $ALLOC_IP:$ALLOCATION_START-$ALLOCATION_END ($ALLOC_ALIAS)"
-echo " SFTP     : $NODE_DOMAIN:$SFTP_PORT"
-echo " SSL Mode : $SSL_MODE ($CERT_NAME)"
-echo "========================================="
+
+printf "  ${C_BOLD}${C_WHT}API KEYS${C_RESET}\n"
+_line
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "PLTA" "$PLTA"
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "PLTC" "${PLTC:-(gagal — buat manual di panel)}"
+_line
 echo
-echo " File data : $RESULT_FILE"
-echo " Log       : $LOG_FILE"
-echo " SSL log   : $SSL_RETRY_LOG"
+
+printf "  ${C_BOLD}${C_WHT}NODE / IDS${C_RESET}\n"
+_line
+printf "  ${C_GRY}%-12s${C_RESET} https://%s:%s ${C_DIM}(TLS native)${C_RESET}\n" "Node URL" "$NODE_DOMAIN" "$DAEMON_PORT"
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "Location" "$LOCATION_ID"
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "Node ID" "$NODE_ID"
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "Nest ID" "$NEST_ID"
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "Egg ID" "$EGG_ID"
+printf "  ${C_GRY}%-12s${C_RESET} %s:%s-%s ${C_DIM}(%s)${C_RESET}\n" "Alloc" "$ALLOC_IP" "$ALLOCATION_START" "$ALLOCATION_END" "$ALLOC_ALIAS"
+printf "  ${C_GRY}%-12s${C_RESET} %s:%s\n" "SFTP" "$NODE_DOMAIN" "$SFTP_PORT"
+printf "  ${C_GRY}%-12s${C_RESET} %s ${C_DIM}(%s)${C_RESET}\n" "SSL Mode" "$SSL_MODE" "$CERT_NAME"
+_line
 echo
+
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "File data" "$RESULT_FILE"
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "Log" "$LOG_FILE"
+printf "  ${C_GRY}%-12s${C_RESET} %s\n" "SSL log" "$SSL_RETRY_LOG"
+echo
+
 if [[ "$SSL_MODE" != "production" ]]; then
-    warn "⚠️  SSL belum production — jalankan untuk retry kapan saja:"
-    warn "    sudo /usr/local/bin/rafz-ssl-retry"
-    warn "    (cronjob otomatis retry tiap 6 jam)"
+    warn "SSL belum production — retry kapan saja:"
+    printf "      ${C_DIM}sudo /usr/local/bin/rafz-ssl-retry${C_RESET}\n"
+    printf "      ${C_GRY}(cronjob otomatis tiap 6 jam)${C_RESET}\n"
+    echo
 fi
+
 if [[ "${INSTALL_CPANEL_BOT:-n}" == "y" ]]; then
     ok "Panel + Wings + Location + Node + Allocation + Egg + Bot CPanel selesai."
 else
     ok "Panel + Wings + Location + Node + Allocation + Egg selesai."
 fi
 echo
-info "Login: https://$PANEL_DOMAIN  |  $ADMIN_USERNAME / $ADMIN_PASSWORD"
+printf "  ${C_GRN}${C_BOLD}Login${C_RESET}  ${C_CYN}https://%s${C_RESET}\n" "$PANEL_DOMAIN"
+printf "  ${C_GRN}${C_BOLD}Akun${C_RESET}   ${C_WHT}%s${C_RESET} / ${C_YLW}%s${C_RESET}\n" "$ADMIN_USERNAME" "$ADMIN_PASSWORD"
+echo
