@@ -128,7 +128,7 @@ WINGS_CONFIG=0
 [[ -x /usr/local/bin/wings ]] && WINGS_BINARY=1
 [[ -s /etc/pterodactyl/config.yml ]] && WINGS_CONFIG=1
 
-banner "RAFZHOST - GOD MODE INSTALLER v3.6"
+banner "RAFZHOST - GOD MODE INSTALLER v3.7"
 echo
 echo "----- STATUS SISTEM -----"
 echo "Panel  : $([ $PANEL_INSTALLED -eq 1 ] && echo 'SUDAH TERPASANG' || echo 'BELUM')"
@@ -153,6 +153,36 @@ ask ADMIN_LASTNAME "Nama Belakang" "${ADMIN_LASTNAME:-Rafz}"
 ask ADMIN_PASSWORD "Password Admin" "${ADMIN_PASSWORD:-}" 1
 # Alias allocation saja yang di-custom; IP=VPS, port=2000-2999, location & hostname auto
 ask ALLOC_ALIAS "Alias Allocation (kosong = nama node)" "${ALLOC_ALIAS:-}"
+
+INSTALL_CPANEL_BOT="n"
+BOT_TOKEN=""
+BOT_OWNER_ID=""
+BOT_CF_ENABLE="n"
+BOT_CF_DOMAIN=""
+BOT_CF_ZONE=""
+BOT_CF_APIKEY=""
+echo
+ask _cp_yn "Setelah install, langsung pasang bot CPanel? (y/n)" "n"
+case "${_cp_yn,,}" in
+    y|yes|ya) INSTALL_CPANEL_BOT="y" ;;
+    *) INSTALL_CPANEL_BOT="n" ;;
+esac
+if [[ "$INSTALL_CPANEL_BOT" == "y" ]]; then
+    ask BOT_TOKEN "Token Bot Telegram (BotFather)" ""
+    ask BOT_OWNER_ID "ID Owner utama / creator (Telegram numeric ID)" ""
+    ask _cf_yn "Ada konfigurasi subdomain Cloudflare? (y/n)" "n"
+    case "${_cf_yn,,}" in
+        y|yes|ya) BOT_CF_ENABLE="y" ;;
+        *) BOT_CF_ENABLE="n" ;;
+    esac
+    if [[ "$BOT_CF_ENABLE" == "y" ]]; then
+        ask BOT_CF_DOMAIN "Domain Cloudflare (contoh: rafzhost.my.id)" ""
+        ask BOT_CF_ZONE "Cloudflare Zone ID" ""
+        ask BOT_CF_APIKEY "Cloudflare API Token / Key" ""
+    fi
+    [[ -n "$BOT_TOKEN" ]] || error_exit 1 "Token bot wajib diisi jika pasang CPanel bot."
+    [[ -n "$BOT_OWNER_ID" ]] || error_exit 1 "ID Owner Telegram wajib diisi."
+fi
 
 [[ -n "$PANEL_DOMAIN" ]]   || error_exit 1 "Domain Panel tidak boleh kosong."
 [[ -n "$NODE_DOMAIN" ]]    || error_exit 1 "Domain Node tidak boleh kosong."
@@ -202,7 +232,7 @@ else
 fi
 
 LOCATION_SHORT="${LOCATION_SHORT:-RafzHost}"
-LOCATION_LONG="${LOCATION_LONG:-RAFZHOST}"
+LOCATION_LONG="${LOCATION_LONG:-RAFZHOST INDONESIA}"
 NODE_NAME="RAFZHOST-NODE"
 NODE_DESCRIPTION="RAFZHOST Pterodactyl Node"
 ALLOCATION_START="2000"
@@ -797,6 +827,8 @@ KEY_OUTPUT="$(cd /var/www/pterodactyl && php "$WORK_DIR/create_keys.php" 2>&1)" 
 echo "$KEY_OUTPUT"
 PLTA="$(printf '%s\n' "$KEY_OUTPUT" | sed -n 's/^PLTA=//p' | head -1)"
 PLTC="$(printf '%s\n' "$KEY_OUTPUT" | sed -n 's/^PLTC=//p' | head -1)"
+ADMIN_ID="$(printf '%s\n' "$KEY_OUTPUT" | sed -n 's/^ADMIN_ID=//p' | head -1)"
+ADMIN_ID="${ADMIN_ID:-1}"
 [[ "$PLTA" == ptla_* ]] || error_exit 1 "PLTA gagal dibuat / format salah"
 [[ "$PLTC" == ptlc_* ]] && ok "PLTC berhasil dibuat."
 ok "PLTA berhasil dibuat."
@@ -1347,7 +1379,248 @@ ok "Cache Panel bersih."
 # =========================================================================
 # 16 RINGKASAN
 # =========================================================================
-STEP="16 Ringkasan"
+
+# =========================================================================
+# 16 DEPLOY BOT CPANEL (opsional)
+# =========================================================================
+STEP="16 CPanel Bot"
+if [[ "${INSTALL_CPANEL_BOT:-n}" == "y" ]]; then
+banner "[16] Deploy Bot CPanel RAFZHOST"
+
+BOT_ZIP_URL="${BOT_ZIP_URL:-https://raw.githubusercontent.com/Rafflie-CH/Panel-Healer/main/bot.zip}"
+BOT_ZIP_LOCAL="/root/bot.zip"
+BOT_SERVER_NAME="CPANEL RAFZHOST"
+BOT_DOCKER_IMAGE="ghcr.io/parkervcp/yolks:nodejs_24"
+BOT_MEMORY_MB=1024
+BOT_DISK_MB=5120
+BOT_CPU_PCT=200
+
+info "Cari allocation kosong di node $NODE_ID..."
+ALLOC_LIST="$(api_req GET "$API_BASE/nodes/$NODE_ID/allocations?per_page=200")" || error_exit 1 "Gagal ambil allocations"
+FREE_ALLOC_ID="$(printf '%s' "$ALLOC_LIST" | jq -r '.data[] | select(.attributes.assigned == false) | .attributes.id' | head -1)"
+if [[ -z "$FREE_ALLOC_ID" || "$FREE_ALLOC_ID" == "null" ]]; then
+    EXTRA_PORT=$((ALLOCATION_END + 1))
+    info "Tidak ada allocation kosong — buat port $EXTRA_PORT..."
+    api_req POST "$API_BASE/nodes/$NODE_ID/allocations" \
+        "$(jq -nc --arg ip "$ALLOC_IP" --arg alias "$ALLOC_ALIAS" --argjson p "$EXTRA_PORT" '{ip:$ip,alias:$alias,ports:[($p|tostring)]}')" >/dev/null \
+        || error_exit 1 "Gagal buat allocation ekstra"
+    ALLOC_LIST="$(api_req GET "$API_BASE/nodes/$NODE_ID/allocations?per_page=200")" || true
+    FREE_ALLOC_ID="$(printf '%s' "$ALLOC_LIST" | jq -r --argjson p "$EXTRA_PORT" '.data[] | select(.attributes.port == $p and .attributes.assigned == false) | .attributes.id' | head -1)"
+fi
+[[ -n "$FREE_ALLOC_ID" && "$FREE_ALLOC_ID" != "null" ]] || error_exit 1 "Tidak ada allocation bebas untuk bot CPanel"
+ok "Allocation ID: $FREE_ALLOC_ID"
+
+info "Ambil konfigurasi egg $EGG_ID..."
+EGG_JSON="$(api_req GET "$API_BASE/nests/$NEST_ID/eggs/$EGG_ID?include=variables")" || error_exit 1 "Gagal ambil egg detail"
+EGG_STARTUP="$(printf '%s' "$EGG_JSON" | jq -r '.attributes.startup // empty')"
+[[ -n "$EGG_STARTUP" ]] || EGG_STARTUP='npm start'
+ENV_JSON="$(printf '%s' "$EGG_JSON" | jq -c '
+  (.attributes.relationships.variables.data // [])
+  | map({(.attributes.env_variable): (.attributes.default_value // "")})
+  | add // {}
+  | .ENABLE_PM2 = "0"
+  | .ENABLE_SSH = "0"
+  | .CMD_RUN = "npm start"
+  | .PACKAGE_MANAGER = "npm"
+  | .USER_UPLOAD = "1"
+  | .AUTO_UPDATE = "0"
+')"
+
+ADMIN_ID="${ADMIN_ID:-1}"
+SRV_BODY="$(jq -nc \
+  --arg name "$BOT_SERVER_NAME" \
+  --argjson user "$ADMIN_ID" \
+  --argjson egg "$EGG_ID" \
+  --arg image "$BOT_DOCKER_IMAGE" \
+  --arg startup "$EGG_STARTUP" \
+  --argjson env "$ENV_JSON" \
+  --argjson mem "$BOT_MEMORY_MB" \
+  --argjson disk "$BOT_DISK_MB" \
+  --argjson cpu "$BOT_CPU_PCT" \
+  --argjson alloc "$FREE_ALLOC_ID" \
+  '{
+    name: $name,
+    description: "Auto-deploy Create Panel bot by RAFZHOST GodMode",
+    user: $user,
+    egg: $egg,
+    docker_image: $image,
+    startup: $startup,
+    environment: $env,
+    limits: {memory: $mem, swap: 0, disk: $disk, io: 500, cpu: $cpu},
+    feature_limits: {databases: 5, allocations: 5, backups: 5},
+    allocation: {default: $alloc},
+    start_on_completion: false
+  }')"
+
+info "Membuat server panel: $BOT_SERVER_NAME (owner admin id=$ADMIN_ID)..."
+SRV_RAW="$(api_req POST "$API_BASE/servers" "$SRV_BODY" 2>&1)" || true
+BOT_SERVER_ID="$(printf '%s' "$SRV_RAW" | jq -r '.attributes.id // empty' 2>/dev/null || true)"
+BOT_SERVER_UUID="$(printf '%s' "$SRV_RAW" | jq -r '.attributes.uuid // empty' 2>/dev/null || true)"
+if [[ -z "$BOT_SERVER_ID" || "$BOT_SERVER_ID" == "null" ]]; then
+    echo "$SRV_RAW" | head -30
+    error_exit 1 "Gagal create server CPanel bot: $(api_error "$SRV_RAW")"
+fi
+ok "Server dibuat. ID=$BOT_SERVER_ID UUID=$BOT_SERVER_UUID"
+
+VOLUME_DIR="/var/lib/pterodactyl/volumes/${BOT_SERVER_UUID}"
+info "Menunggu volume server siap..."
+for _i in $(seq 1 60); do
+    [[ -d "$VOLUME_DIR" ]] && break
+    sleep 2
+done
+[[ -d "$VOLUME_DIR" ]] || error_exit 1 "Volume server tidak ditemukan: $VOLUME_DIR"
+ok "Volume: $VOLUME_DIR"
+
+info "Ambil bot.zip..."
+mkdir -p /tmp/rafz-bot-deploy
+rm -rf /tmp/rafz-bot-deploy/*
+if [[ -f "$BOT_ZIP_LOCAL" ]]; then
+    cp -f "$BOT_ZIP_LOCAL" /tmp/rafz-bot-deploy/bot.zip
+    ok "Pakai bot.zip lokal: $BOT_ZIP_LOCAL"
+elif curl -fsSL "$BOT_ZIP_URL" -o /tmp/rafz-bot-deploy/bot.zip; then
+    ok "Download bot.zip OK"
+else
+    error_exit 1 "Gagal ambil bot.zip — taruh di /root/bot.zip atau set BOT_ZIP_URL"
+fi
+
+info "Extract bot ke volume..."
+unzip -qo /tmp/rafz-bot-deploy/bot.zip -d "$VOLUME_DIR"
+# Buang session/token lama dari zip (nanti diganti token user)
+rm -rf "$VOLUME_DIR/session" 2>/dev/null || true
+mkdir -p "$VOLUME_DIR/session" "$VOLUME_DIR/library/database"
+[[ -f "$VOLUME_DIR/package.json" ]] || error_exit 1 "bot.zip invalid — package.json tidak ada di root"
+# Pastikan install script egg jalan: package.json ada, USER_UPLOAD=1, CMD_RUN=npm start
+chown -R 999:999 "$VOLUME_DIR" 2>/dev/null || true
+ok "Bot diextract ke volume."
+
+info "Generate settings.js..."
+PANEL_NAME_SAFE="${ALLOC_ALIAS:-RAFZHOST}"
+js_esc() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
+
+_CF_BLOCK='global.cf = { domains: {} }'
+if [[ "${BOT_CF_ENABLE:-n}" == "y" && -n "${BOT_CF_DOMAIN:-}" ]]; then
+  _CF_BLOCK="global.cf = { domains: { $(js_esc "$BOT_CF_DOMAIN"): { zone: $(js_esc "$BOT_CF_ZONE"), apikey: $(js_esc "$BOT_CF_APIKEY") } } }"
+fi
+
+cat > "$VOLUME_DIR/settings.js" <<SETJS
+const fs = require("fs")
+const chalk = require("chalk")
+const { version } = require("./package.json")
+
+global.owner = [$(js_esc "$BOT_OWNER_ID")]
+global.namaOwner = $(js_esc "${ADMIN_FIRSTNAME:-Admin}")
+global.botname = "RAFZ BOT"
+global.botname2 = "RAFZ BOT"
+global.packname = "SAN"
+global.author = "Rafzbot"
+global.versi = version
+global.noPrefix = false
+global.prefix = ["/", ".", "#", "!"]
+global.linkOwner = "https://t.me/"
+global.timeZone = "Asia/Jakarta"
+global.locale = "id-ID"
+global.sessionTtlMinutes = 30
+global.confirmTtlMinutes = 5
+global.panelLimits = { ramMax: 1024, diskMax: 1024, cpuMax: 1600, bulanMax: 120 }
+global.defaultServer = "1"
+global.panelDocker = "ghcr.io/parkervcp/yolks:nodejs_24"
+global.panelEmailDomain = "gmail.com"
+global.featureLimits = { databases: 5, backups: 5, allocations: 5 }
+global.safeUsers = ["rafz", "owner", "admin", $(js_esc "${ADMIN_USERNAME:-admin}")]
+global.SOUND_URLS = []
+global.broadcastDelayMs = 100
+global.featureTestTimeoutMs = 35000
+global.flood = { maxRetry: 5, maxPerSec: 25, maxWaitSec: 60, jitterMs: 250, verbose: true }
+global.WELCOME_PHOTO = ""
+global.notifGroupId = ""
+global.backup = { enabled: true, intervalMs: 21600000, sendToOwner: true }
+
+${_CF_BLOCK}
+
+global.panelServer = {
+  1: {
+    name: $(js_esc "$PANEL_NAME_SAFE"),
+    domain: $(js_esc "https://${PANEL_DOMAIN}"),
+    apikey: $(js_esc "$PLTA"),
+    capikey: $(js_esc "$PLTC"),
+    egg: $(js_esc "$EGG_ID"),
+    nestid: $(js_esc "$NEST_ID"),
+    loc: $(js_esc "$LOCATION_ID")
+  }
+}
+global.privateServerId = "1"
+global.monitor = {
+  enabled: true, chatId: null, ramThreshold: 90, diskThreshold: 92,
+  ramAbsoluteMaxMiB: 6144, diskAbsoluteMaxMiB: 30720, pollIntervalMs: 45000,
+  suspiciousDiskGrowthMiB: 3584, suspiciousDiskGrowthPct: 35,
+  suspendCooldownMs: 300000, autoDeleteAfterMs: 0, debug: false,
+  dbPath: "./library/database/ptero-stats.json"
+}
+global.image = { menu: "", reply: "", logo: "" }
+global.defaultLang = "id"
+try {
+  let file = require.resolve(__filename)
+  fs.watchFile(file, () => {
+    try { fs.unwatchFile(file); delete require.cache[file]; require(file) } catch (e) {}
+  })
+} catch (e) {}
+SETJS
+
+mkdir -p "$VOLUME_DIR/session"
+BOT_TOKEN="$BOT_TOKEN" VOLUME_DIR="$VOLUME_DIR" python3 - <<'PYTOKEN'
+import json, os
+tok = os.environ.get("BOT_TOKEN", "")
+vd = os.environ["VOLUME_DIR"]
+json.dump({"token": tok}, open(os.path.join(vd, "session", "creds.json"), "w"), indent=2)
+open(os.path.join(vd, ".env"), "w").write("TELEGRAM_TOKEN=%s\n" % tok)
+print("token written")
+PYTOKEN
+
+echo '[]' > "$VOLUME_DIR/library/database/owner.json"
+echo '{}' > "$VOLUME_DIR/library/database/admin.json"
+echo '{}' > "$VOLUME_DIR/library/database/panel.json"
+chown -R 999:999 "$VOLUME_DIR" 2>/dev/null || true
+chmod 600 "$VOLUME_DIR/session/creds.json" "$VOLUME_DIR/settings.js" 2>/dev/null || true
+ok "settings.js + session token siap."
+
+set +e
+api_req POST "$API_BASE/servers/$BOT_SERVER_ID/unsuspend" '{}' >/dev/null 2>&1
+set -e
+
+info "Menyalakan server bot..."
+BOT_IDENTIFIER="$(api_req GET "$API_BASE/servers/$BOT_SERVER_ID" | jq -r '.attributes.identifier // empty')"
+if [[ -n "$BOT_IDENTIFIER" && -n "$PLTC" ]]; then
+    set +e
+    curl -fsSk --max-time 30 \
+      -H "Authorization: Bearer $PLTC" \
+      -H "Accept: application/json" \
+      -H "Content-Type: application/json" \
+      -X POST -d '{"signal":"start"}' \
+      "https://${PANEL_DOMAIN}/api/client/servers/${BOT_IDENTIFIER}/power" >/dev/null 2>&1
+    POWER_RC=$?
+    set -e
+    [[ $POWER_RC -eq 0 ]] && ok "Signal START terkirim ($BOT_IDENTIFIER)" || warn "Power start gagal — nyalakan manual di panel."
+else
+    warn "Identifier/PLTC kosong — start manual di panel."
+fi
+
+rm -rf /tmp/rafz-bot-deploy
+echo
+ok "Bot CPanel siap."
+echo "  Server : $BOT_SERVER_NAME (ID $BOT_SERVER_ID)"
+echo "  Owner  : admin id=$ADMIN_ID / Telegram $BOT_OWNER_ID"
+echo "  Panel  : https://$PANEL_DOMAIN"
+echo "  Name   : $PANEL_NAME_SAFE"
+[[ "${BOT_CF_ENABLE:-n}" == "y" ]] && echo "  CF     : $BOT_CF_DOMAIN"
+echo
+else
+info "Skip deploy bot CPanel."
+fi
+
+# =========================================================================
+# 17 RINGKASAN
+# =========================================================================
+STEP="17 Ringkasan"
 cat > "$RESULT_FILE" <<DATA
 =========================================================
 RAFZHOST PTERODACTYL INSTALLATION
@@ -1371,6 +1644,9 @@ SSL_MODE=$SSL_MODE
 SSL_CERT_NAME=$CERT_NAME
 PLTA=$PLTA
 PLTC=$PLTC
+INSTALL_CPANEL_BOT=${INSTALL_CPANEL_BOT:-n}
+BOT_SERVER_ID=${BOT_SERVER_ID:-}
+BOT_OWNER_ID=${BOT_OWNER_ID:-}
 =========================================================
 DATA
 chmod 600 "$RESULT_FILE"
@@ -1490,6 +1766,10 @@ if [[ "$SSL_MODE" != "production" ]]; then
     warn "    sudo /usr/local/bin/rafz-ssl-retry"
     warn "    (cronjob otomatis retry tiap 6 jam)"
 fi
-ok "Panel + Wings + Location + Node + Allocation + Egg selesai."
+if [[ "${INSTALL_CPANEL_BOT:-n}" == "y" ]]; then
+    ok "Panel + Wings + Location + Node + Allocation + Egg + Bot CPanel selesai."
+else
+    ok "Panel + Wings + Location + Node + Allocation + Egg selesai."
+fi
 echo
 info "Login: https://$PANEL_DOMAIN  |  $ADMIN_USERNAME / $ADMIN_PASSWORD"
